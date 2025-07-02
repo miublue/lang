@@ -69,6 +69,7 @@ typedef struct {
     char *name;
 } fun_t;
 
+/* XXX: i either add all other lists in here or make all these global */
 typedef struct {
     uint32_t toks_sz, toks_cap, text_sz, i;
     token_t *toks, *tok;
@@ -135,7 +136,7 @@ static uint32_t nfuns = 0;
 #define MAX_STRINGS 1024
 static token_t *strs[MAX_STRINGS];
 static uint32_t nstrs = 0;
-static uint32_t nconds = 0, nloops = 0, curloop = 0;
+static uint32_t nlabls = 0, cloop = 0;
 
 /* XXX: small core library, '&&', '||' */
 
@@ -566,38 +567,38 @@ static void _kwextern(gen_t *gen, FILE *out) {
 
 static void _kwbreak(gen_t *gen, FILE *out) {
     NEXT(1);
-    if (curloop == 0) error("unexpected break");
-    fprintf(out, "  jmp .while_end.%d\n", curloop-1);
+    if (cloop == 0) error("unexpected break");
+    fprintf(out, "  jmp .L__WHILE_END.%d\n", cloop-1);
 }
 
 static void _kwwhile(gen_t *gen, FILE *out) {
-    int cloop = nloops++;
-    curloop = nloops;
+    int cur = nlabls++;
+    cloop = nlabls;
     NEXT(1);
-    fprintf(out, ".while.%d:\n", cloop);
+    fprintf(out, ".L__WHILE.%d:\n", cur);
     _expr(gen, out);
     fprintf(out, "  testq %%rax,%%rax\n"
-                 "  jz .while_end.%d\n", cloop);
+                 "  jz .L__WHILE_END.%d\n", cur);
     _body(gen, out);
-    curloop = cloop;
-    fprintf(out, "  jmp .while.%d\n"
-                 ".while_end.%d:\n", cloop, cloop);
+    cloop = cur;
+    fprintf(out, "  jmp .L__WHILE.%d\n"
+                 ".L__WHILE_END.%d:\n", cur, cur);
 }
 
 static void _kwif(gen_t *gen, FILE *out) {
-    int cif = nconds++;
+    int cur = nlabls++;
     NEXT(1);
     _expr(gen, out);
     fprintf(out, "  testq %%rax,%%rax\n"
-                 "  jz .if_end.%d\n", cif);
+                 "  jz .L__IF_END.%d\n", cur);
     _body(gen, out);
-    fprintf(out, "  jmp .ifelse_end.%d\n"
-                 ".if_end.%d:\n", cif, cif);
+    fprintf(out, "  jmp .L__IFELSE_END.%d\n"
+                 ".L__IF_END.%d:\n", cur, cur);
     if (PEEK(0)->kind == TK_ELSE) {
         NEXT(1);
         _body(gen, out);
     }
-    fprintf(out, ".ifelse_end.%d:\n", cif);
+    fprintf(out, ".L__IFELSE_END.%d:\n", cur);
 }
 
 static void _stmt(gen_t *gen, FILE *out) {
