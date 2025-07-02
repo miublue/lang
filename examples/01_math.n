@@ -1,0 +1,16 @@
+extern putd, putchar
+
+fun putnum(n) {
+    putd(n)
+    putchar('\n')
+}
+
+fun add(a, b) a + b
+
+fun main() {
+    a = 36
+    b = a * 2
+    putnum(a = add(b, 3) - 6)
+    return 0
+}
+
