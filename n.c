@@ -6,6 +6,11 @@
 
 #define LENGTH(X) (sizeof(X)/sizeof((X)[0]))
 #define ALLOC_SZ 1024
+/* XXX: these should probably be dynamically allocated anyways */
+#define MAX_FUNS 1024
+#define MAX_STRINGS 1024
+#define MAX_VARS 256
+#define MAX_ARGS 6
 
 enum {
     TK_EOF, TK_ID, TK_INT, TK_STR, TK_CHR,
@@ -37,7 +42,6 @@ static const int PRECEDENCES[][MAX_PRECEDENCE] = {
     [PREC_SHLSHR]  = { TK_SHL, TK_SHR },
 };
 
-#define MAX_ARGS 6
 static const char *ARGREGS[MAX_ARGS] = {
     "%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9",
 };
@@ -54,6 +58,7 @@ static const char *KEYWORDS[] = {
     "fun", "return", "extern",
 };
 
+/* XXX: these structures are literally the same */
 typedef struct {
     uint32_t kind, sz;
     char *ptr;
@@ -69,14 +74,7 @@ typedef struct {
     char *name;
 } fun_t;
 
-/* XXX: i either add all other lists in here or make all these global */
-typedef struct {
-    uint32_t toks_sz, toks_cap, text_sz, i;
-    token_t *toks, *tok;
-    char *text;
-} gen_t;
-
-static const char *_gencmp[MAX_TOKENS] = {
+static const char *GENCMP[MAX_TOKENS] = {
     [TK_EQEQ] = "sete",
     [TK_NEQ]  = "setne",
     [TK_LT]   = "setl",
@@ -85,7 +83,7 @@ static const char *_gencmp[MAX_TOKENS] = {
     [TK_GEQ]  = "setge",
 };
 
-static const char *_genops[MAX_TOKENS] = {
+static const char *GENOPS[MAX_TOKENS] = {
     [TK_SHL] =  "  mov %rax,%rcx\n"
                 "  pop %rax\n"
                 "  shl %cl,%rax\n",
@@ -125,45 +123,42 @@ static const char *_genops[MAX_TOKENS] = {
                 "  mov %rdx,%rax\n",
 };
 
-#define MAX_VARS 256
+static uint32_t toks_sz, toks_cap, text_sz, i;
+static token_t *toks, *tok;
+static char *text;
+
 static var_t vars[MAX_VARS];
-static uint32_t nvars = 0;
-
-#define MAX_FUNS 1024
 static fun_t funs[MAX_FUNS];
-static uint32_t nfuns = 0;
-
-#define MAX_STRINGS 1024
 static token_t *strs[MAX_STRINGS];
-static uint32_t nstrs = 0;
+static uint32_t nvars = 0, nfuns = 0, nstrs = 0;
 static uint32_t nlabls = 0, cloop = 0;
 
-/* XXX: small core library, '&&', '||' */
+/* XXX: small core library, pointers, arrays, types, '&&', '||' */
 
 void error(char *msg) {
     fprintf(stderr, "error: %s\n", msg);
     exit(1);
 }
 
-static void _append_token(gen_t *gen, token_t tok) {
-    if (gen->toks_sz >= gen->toks_cap)
-        gen->toks = realloc(gen->toks, sizeof(token_t)*(gen->toks_cap += ALLOC_SZ));
-    gen->toks[gen->toks_sz++] = tok;
+static void _append_token(token_t tok) {
+    if (toks_sz >= toks_cap)
+        toks = realloc(toks, sizeof(token_t)*(toks_cap += ALLOC_SZ));
+    toks[toks_sz++] = tok;
 }
 
-#define PEEK(N) (gen->text[gen->i+(N)])
-#define NEXT(N) (gen->i += (N))
-#define BOUND(N) (gen->i+(N) < gen->text_sz)
+#define PEEK(N) (text[i+(N)])
+#define NEXT(N) (i += (N))
+#define BOUND(N) (i+(N) < text_sz)
 
-static void _skip_space(gen_t *gen) {
+static void _skip_space(void) {
     while (BOUND(0) && isspace(PEEK(0))) NEXT(1);
     if (BOUND(0) && PEEK(0) == '#') {
         while (BOUND(0) && PEEK(0) != '\n') NEXT(1);
-        _skip_space(gen);
+        _skip_space();
     }
 }
 
-static int isoperator(char *buf, int sz) {
+static int _is_operator(char *buf, int sz) {
     int i;
     for (i = 0; i < LENGTH(OPERATORS); ++i) {
         if (strlen(OPERATORS[i]) != sz) continue;
@@ -172,7 +167,7 @@ static int isoperator(char *buf, int sz) {
     return -1;
 }
 
-static int iskeyword(char *buf, int sz) {
+static int _is_keyword(char *buf, int sz) {
     int i;
     for (i = 0; i < LENGTH(KEYWORDS); ++i) {
         if (strlen(KEYWORDS[i]) != sz) continue;
@@ -181,11 +176,11 @@ static int iskeyword(char *buf, int sz) {
     return -1;
 }
 
-static token_t _next_token(gen_t *gen) {
+static token_t _next_token(void) {
     token_t tok = {TK_EOF};
-    _skip_space(gen);
+    _skip_space();
     if (!BOUND(0)) return tok;
-    tok.ptr = gen->text+gen->i;
+    tok.ptr = text+i;
     if (isdigit(PEEK(0))) {
         tok.kind = TK_INT;
         while (BOUND(0) && isdigit(PEEK(0))) {
@@ -221,8 +216,8 @@ static token_t _next_token(gen_t *gen) {
         NEXT(1);
         return tok;
     } else if (strchr(CHAROPS, PEEK(0)) != NULL) {
-        int op1 = isoperator(tok.ptr, 1);
-        int op2 = isoperator(tok.ptr, 2);
+        int op1 = _is_operator(tok.ptr, 1);
+        int op2 = _is_operator(tok.ptr, 2);
         if (op2 != -1) {
             tok.kind = op2+TK_LBRACK;
             tok.sz = 2;
@@ -238,7 +233,7 @@ static token_t _next_token(gen_t *gen) {
             ++tok.sz;
             NEXT(1);
         }
-        int kwrd = iskeyword(tok.ptr, tok.sz);
+        int kwrd = _is_keyword(tok.ptr, tok.sz);
         if (kwrd != -1) tok.kind = kwrd+TK_IF;
         return tok;
     }
@@ -249,35 +244,30 @@ static token_t _next_token(gen_t *gen) {
 #undef NEXT
 #undef BOUND
 
-void parse_file(gen_t *gen, FILE *file) {
+void parse_file(FILE *file) {
     fseek(file, 0, SEEK_END);
-    gen->text_sz = ftell(file);
-    gen->text = malloc(gen->text_sz);
+    text_sz = ftell(file);
+    text = malloc(text_sz);
     fseek(file, 0, SEEK_SET);
-    if (!fread(gen->text, sizeof(char), gen->text_sz, file))
+    if (!fread(text, sizeof(char), text_sz, file))
         error("could not read from file");
-    gen->i = 0;
-    gen->toks = malloc(sizeof(token_t) * (gen->toks_cap = ALLOC_SZ));
-    gen->toks_sz = 0;
+    i = 0;
+    toks_sz = 0;
+    toks = malloc(sizeof(token_t) * (toks_cap = ALLOC_SZ));
     token_t tok = {TK_EOF};
     do {
-        tok = _next_token(gen);
-        _append_token(gen, tok);
-    } while (gen->i < gen->text_sz && tok.kind != TK_EOF);
+        tok = _next_token();
+        _append_token(tok);
+    } while (i < text_sz && tok.kind != TK_EOF);
 }
 
-void free_gen(gen_t *gen) {
-    free(gen->toks);
-    free(gen->text);
-}
+#define NEXT(N) (tok += N)
+#define PEEK(N) (tok + N)
 
-#define NEXT(N) (gen->tok += N)
-#define PEEK(N) (gen->tok + N)
-
-static void _term(gen_t *gen, FILE *out);
-static void _expr(gen_t *gen, FILE *out);
-static void _stmt(gen_t *gen, FILE *out);
-static void _binary(gen_t *gen, FILE *out, int prec);
+static void _term(FILE *out);
+static void _expr(FILE *out);
+static void _stmt(FILE *out);
+static void _binary(FILE *out, int prec);
 
 static int _getfun(char *name, int sz) {
     int i;
@@ -324,7 +314,7 @@ static void _funftr(FILE *out) {
     fprintf(out, "  leave\n  ret\n");
 }
 
-static void _ident(gen_t *gen, FILE *out) {
+static void _ident(FILE *out) {
     token_t *name = PEEK(0);
     int idx, sz;
     NEXT(1);
@@ -340,7 +330,7 @@ static void _ident(gen_t *gen, FILE *out) {
                     exit(1);
                 }
                 NEXT(1);
-                _expr(gen, out);
+                _expr(out);
                 fprintf(out, "  mov %%rax,%s\n", ARGREGS[arity++]);
             } while (PEEK(0)->kind == TK_COMMA);
         }
@@ -359,7 +349,7 @@ static void _ident(gen_t *gen, FILE *out) {
             sz = _getvarpos(idx);
         }
         NEXT(1);
-        _expr(gen, out);
+        _expr(out);
         fprintf(out, "  mov %%rax,-%d(%%rbp)\n", sz);
     } break;
     /* get variable */
@@ -373,14 +363,14 @@ static void _ident(gen_t *gen, FILE *out) {
     }
 }
 
-static void _number(gen_t *gen, FILE *out) {
+static void _number(FILE *out) {
     int neg = PEEK(0)->kind == TK_SUB;
     if (neg) NEXT(1);
     fprintf(out, "  mov $%s%.*s,%%rax\n", neg?"-":"", PEEK(0)->sz, PEEK(0)->ptr);
     NEXT(1);
 }
 
-static void _character(gen_t *gen, FILE *out) {
+static void _character(FILE *out) {
     token_t *chr = PEEK(0);
     int num = chr->ptr[0];
     /* escape character */
@@ -401,31 +391,32 @@ static void _character(gen_t *gen, FILE *out) {
     NEXT(1);
 }
 
-static void _string(gen_t *gen, FILE *out) {
+static void _string(FILE *out) {
     strs[nstrs++] = PEEK(0);
     fprintf(out, "  mov $.string.%d,%%rax\n", nstrs-1);
     NEXT(1);
 }
 
-static void _unary(gen_t *gen, FILE *out) {
+static void _unary(FILE *out) {
     switch (PEEK(0)->kind) {
     case TK_NOT:
         NEXT(1);
-        _term(gen, out);
+        _term(out);
         fprintf(out, "  not %%rax\n");
         break;
     case TK_BNOT:
         NEXT(1);
-        _term(gen, out);
+        _term(out);
         fprintf(out, "  cmp $0,%%rax\n  sete %%al\n  movzx  %%al,%%rax\n");
         break;
     case TK_SUB:
         if (PEEK(1)->kind == TK_INT)
-            return _number(gen, out);
+            return _number(out);
         NEXT(1);
-        _expr(gen, out);
+        _expr(out);
         fprintf(out, "  neg %%rax\n");
         break;
+    /* XXX: &ref, *deref */
     default:
         fprintf(stderr, "error: unexpected '%.*s'\n",
             PEEK(0)->sz, PEEK(0)->ptr);
@@ -433,17 +424,18 @@ static void _unary(gen_t *gen, FILE *out) {
     }
 }
 
-static void _term(gen_t *gen, FILE *out) {
+static void _term(FILE *out) {
     switch (PEEK(0)->kind) {
     case TK_NOT: case TK_BNOT: case TK_SUB:
-        return _unary(gen, out);
-    case TK_INT: return _number(gen, out);
-    case TK_CHR: return _character(gen, out);
-    case TK_STR: return _string(gen, out);
-    case TK_ID: return _ident(gen, out);
+    case TK_MUL: case TK_AND:
+        return _unary(out);
+    case TK_INT: return _number(out);
+    case TK_CHR: return _character(out);
+    case TK_STR: return _string(out);
+    case TK_ID: return _ident(out);
     case TK_LPAREN:
         NEXT(1);
-        _expr(gen, out);
+        _expr(out);
         if (PEEK(0)->kind != TK_RPAREN) error("missing ')'");
         NEXT(1);
         return;
@@ -461,55 +453,55 @@ static int _precop(int kind, int prec) {
     return 0;
 }
 
-static void _compare_expr(gen_t *gen, FILE *out, int op, int prec) {
-    _binary(gen, out, prec+1);
+static void _compare_expr(FILE *out, int op, int prec) {
+    _binary(out, prec+1);
     if (prec < PREC_COMPARE) error("&& and || are not implemented yet");
     fprintf(out, 
         "  pop %%rdi\n"
         "  cmp %%rax,%%rdi\n"
         "  %s %%al\n"
         "  movzb %%al,%%rax\n",
-        _gencmp[op]);
+        GENCMP[op]);
 }
 
-static void _binary_expr(gen_t *gen, FILE *out, int op, int prec) {
-    if (prec == MAX_PRECEDENCE) _term(gen, out);
-    else _binary(gen, out, prec+1);
-    fprintf(out, "%s", _genops[op]);
+static void _binary_expr(FILE *out, int op, int prec) {
+    if (prec == MAX_PRECEDENCE) _term(out);
+    else _binary(out, prec+1);
+    fprintf(out, "%s", GENOPS[op]);
 }
 
-static void _binary(gen_t *gen, FILE *out, int prec) {
+static void _binary(FILE *out, int prec) {
     int op;
-    if (prec == MAX_PRECEDENCE) _term(gen, out);
-    else _binary(gen, out, prec+1);
+    if (prec == MAX_PRECEDENCE) _term(out);
+    else _binary(out, prec+1);
     while (prec < MAX_PRECEDENCE && _precop(PEEK(0)->kind, prec)) {
         if ((op = PEEK(0)->kind) == TK_EOF) break;
         NEXT(1);
         fprintf(out, "  push %%rax\n");
-        if (prec <= PREC_COMPARE) _compare_expr(gen, out, op, prec);
-        else _binary_expr(gen, out, op, prec);
+        if (prec <= PREC_COMPARE) _compare_expr(out, op, prec);
+        else _binary_expr(out, op, prec);
     }
 }
 
-static void _expr(gen_t *gen, FILE *out) {
-    _binary(gen, out, 0);
+static void _expr(FILE *out) {
+    _binary(out, 0);
 }
 
-static void _body(gen_t *gen, FILE *out) {
+static void _body(FILE *out) {
     if (PEEK(0)->kind != TK_LBRACK) {
-        if (PEEK(0)->kind >= TK_IF && PEEK(0)->kind <= TK_EXTERN) _stmt(gen, out);
-        else _expr(gen, out);
+        if (PEEK(0)->kind >= TK_IF && PEEK(0)->kind <= TK_EXTERN) _stmt(out);
+        else _expr(out);
     } else {
         NEXT(1);
         while (PEEK(0)->kind != TK_RBRACK) {
             if (PEEK(0)->kind == TK_EOF) error("missing '}'");
-            _stmt(gen, out);
+            _stmt(out);
         }
         NEXT(1);
     }
 }
 
-static void _kwfun(gen_t *gen, FILE *out) {
+static void _kwfun(FILE *out) {
     token_t *name = PEEK(1);
     if (name->kind != TK_ID) error("expected function name");
     NEXT(2); /* skip fun + name */
@@ -546,17 +538,17 @@ static void _kwfun(gen_t *gen, FILE *out) {
         exit(1);
     }
 
-    _body(gen, out);
+    _body(out);
     _funftr(out);
 }
 
-static void _kwreturn(gen_t *gen, FILE *out) {
+static void _kwreturn(FILE *out) {
     NEXT(1);
-    _expr(gen, out);
+    _expr(out);
     _funftr(out);
 }
 
-static void _kwextern(gen_t *gen, FILE *out) {
+static void _kwextern(FILE *out) {
     do {
         NEXT(1);
         if (PEEK(0)->kind != TK_ID) error("invalid external symbol");
@@ -565,51 +557,51 @@ static void _kwextern(gen_t *gen, FILE *out) {
     } while (PEEK(0)->kind == TK_COMMA);
 }
 
-static void _kwbreak(gen_t *gen, FILE *out) {
+static void _kwbreak(FILE *out) {
     NEXT(1);
     if (cloop == 0) error("unexpected break");
     fprintf(out, "  jmp .L__WHILE_END.%d\n", cloop-1);
 }
 
-static void _kwwhile(gen_t *gen, FILE *out) {
+static void _kwwhile(FILE *out) {
     int cur = nlabls++;
     cloop = nlabls;
     NEXT(1);
     fprintf(out, ".L__WHILE.%d:\n", cur);
-    _expr(gen, out);
+    _expr(out);
     fprintf(out, "  testq %%rax,%%rax\n"
                  "  jz .L__WHILE_END.%d\n", cur);
-    _body(gen, out);
+    _body(out);
     cloop = cur;
     fprintf(out, "  jmp .L__WHILE.%d\n"
                  ".L__WHILE_END.%d:\n", cur, cur);
 }
 
-static void _kwif(gen_t *gen, FILE *out) {
+static void _kwif(FILE *out) {
     int cur = nlabls++;
     NEXT(1);
-    _expr(gen, out);
+    _expr(out);
     fprintf(out, "  testq %%rax,%%rax\n"
                  "  jz .L__IF_END.%d\n", cur);
-    _body(gen, out);
+    _body(out);
     fprintf(out, "  jmp .L__IFELSE_END.%d\n"
                  ".L__IF_END.%d:\n", cur, cur);
     if (PEEK(0)->kind == TK_ELSE) {
         NEXT(1);
-        _body(gen, out);
+        _body(out);
     }
     fprintf(out, ".L__IFELSE_END.%d:\n", cur);
 }
 
-static void _stmt(gen_t *gen, FILE *out) {
+static void _stmt(FILE *out) {
     switch (PEEK(0)->kind) {
-    case TK_FUN: return _kwfun(gen, out);
-    case TK_RETURN: return _kwreturn(gen, out);
-    case TK_EXTERN: return _kwextern(gen, out);
-    case TK_BREAK: return _kwbreak(gen, out);
-    case TK_WHILE: return _kwwhile(gen, out);
-    case TK_IF: return _kwif(gen, out);
-    case TK_ID: return _ident(gen, out);
+    case TK_FUN: return _kwfun(out);
+    case TK_RETURN: return _kwreturn(out);
+    case TK_EXTERN: return _kwextern(out);
+    case TK_BREAK: return _kwbreak(out);
+    case TK_WHILE: return _kwwhile(out);
+    case TK_IF: return _kwif(out);
+    case TK_ID: return _ident(out);
     default:
         fprintf(stderr, "error: unexpected '%.*s'\n",
             PEEK(0)->sz, PEEK(0)->ptr);
@@ -620,14 +612,14 @@ static void _stmt(gen_t *gen, FILE *out) {
 #undef PEEK
 #undef NEXT
 
-void gen_file(gen_t *gen, FILE *out) {
-    gen->tok = gen->toks;
+void gen_file(FILE *out) {
+    tok = toks;
     fprintf(out, ".text\n.globl _start\n_start:\n  xor %%rax,%%rax\n  call main\n");
     fprintf(out, "  mov %%rax,%%rdi\n  mov $60,%%rax\n  syscall\n");
     do {
-        _stmt(gen, out);
-        /*_decl(gen, file);*/
-    } while (gen->tok->kind != TK_EOF);
+        _stmt(out);
+        /*_decl(file);*/
+    } while (tok->kind != TK_EOF);
     if (_getfun("main", 4) == -1) error("missing 'main' function");
     int i;
     fprintf(out, ".data\n");
@@ -651,7 +643,7 @@ static void _runasm(const char *path, const char *out) {
     char cmd[1024] = {0};
     sprintf(cmd, "as %s nlib.s -o %s.o && ld %s.o -o %s && rm %s %s.o",
         path, path, path, out, path, path);
-    if (system(cmd));
+    if (system(cmd)) exit(1);
 }
 
 void usage(const char *prog) {
@@ -678,19 +670,19 @@ int main(int argc, const char **argv) {
         else
             input_path = argv[i];
     }
-    gen_t gen = {0};
 
     sprintf(output_asm, "%s.s", input_path? input_path : "a");
     input_file = _open(input_path, "r");
     output_file = output_stdout? stdout : _open(output_asm, "w+");
 
-    parse_file(&gen, input_file);
-    gen_file(&gen, output_file);
+    parse_file(input_file);
+    gen_file(output_file);
 
     fclose(input_file);
     fclose(output_file);
+    free(toks);
+    free(text);
     if (assemble && !output_stdout) _runasm(output_asm, (output_path)? output_path : "a.out");
-    free_gen(&gen);
     return 0;
 }
 
