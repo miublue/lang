@@ -640,7 +640,7 @@ static FILE *_open(const char *path, const char *mode) {
 }
 
 static void _runasm(const char *path, const char *out) {
-    char cmd[1024] = {0};
+    char cmd[ALLOC_SZ] = {0};
     sprintf(cmd, "as %s nlib.s -o %s.o && ld %s.o -o %s && rm %s %s.o",
         path, path, path, out, path, path);
     if (system(cmd)) exit(1);
@@ -655,7 +655,7 @@ void usage(const char *prog) {
 int main(int argc, const char **argv) {
     FILE *input_file = NULL, *output_file = NULL;
     const char *input_path = NULL, *output_path = NULL;
-    char output_asm[1024] = {0};
+    char output_asm[ALLOC_SZ] = {0};
     int i, assemble = 1, output_stdout = 0;
     if (argc < 2) usage(argv[0]);
 
