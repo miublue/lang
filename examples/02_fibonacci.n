@@ -3,8 +3,6 @@ extern putnum
 fun fib(n) {
     a = 0
     b = 1
-    # XXX: have to define it outside loop lest it allocates memory for it on every iteration
-    c = 0
     while (a < n) {
         putnum(a)
         c = a + b

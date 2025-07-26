@@ -12,6 +12,8 @@
 #define MAX_VARS 256
 #define MAX_ARGS 6
 
+enum { LVALUE_NONE, LVALUE_REF, LVALUE_DEREF };
+
 enum {
     TK_EOF, TK_ID, TK_INT, TK_STR, TK_CHR,
     TK_IF, TK_ELSE, TK_WHILE, TK_BREAK,
@@ -20,7 +22,7 @@ enum {
     TK_COMMA, TK_ADD, TK_SUB, TK_MUL, TK_DIV, TK_MOD,
     TK_BAND, TK_BOR, TK_BNOT, TK_EQ, TK_EQEQ, TK_NEQ,
     TK_LT, TK_GT, TK_LEQ, TK_GEQ, TK_SHL, TK_SHR,
-    TK_AND, TK_OR, TK_NOT, TK_XOR, MAX_TOKENS
+    TK_AND, TK_OR, TK_AT, TK_NOT, TK_XOR, MAX_TOKENS
 };
 
 enum {
@@ -46,11 +48,11 @@ static const char *ARGREGS[MAX_ARGS] = {
     "%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9",
 };
 
-static const char *CHAROPS = "{}(),+-*/%&|!=<>~^";
+static const char *CHAROPS = "{}(),+-*/%&|@!=<>~^";
 static const char *OPERATORS[] = {
     "{", "}", "(", ")", ",", "+", "-", "*", "/", "%",
     "&&", "||", "!", "=", "==", "!=", "<", ">", "<=",
-    ">=", "<<", ">>", "&", "|", "~", "^",
+    ">=", "<<", ">>", "&", "|", "@", "~", "^",
 };
 
 static const char *KEYWORDS[] = {
@@ -133,8 +135,7 @@ static token_t *strs[MAX_STRINGS];
 static uint32_t nvars = 0, nfuns = 0, nstrs = 0;
 static uint32_t nlabls = 0, cloop = 0;
 
-/* XXX: small core library, pointers, arrays, types, '&&', '||' */
-
+/* XXX: small core library, arrays, types, '&&', '||' */
 void error(char *msg) {
     fprintf(stderr, "error: %s\n", msg);
     exit(1);
@@ -314,7 +315,7 @@ static void _funftr(FILE *out) {
     fprintf(out, "  leave\n  ret\n");
 }
 
-static void _ident(FILE *out) {
+static void _ident(FILE *out, int lvalue) {
     token_t *name = PEEK(0);
     int idx, sz;
     NEXT(1);
@@ -323,25 +324,25 @@ static void _ident(FILE *out) {
     /* call function */
     case TK_LPAREN: {
         int arity = 0;
-        if (PEEK(0)->kind != TK_RPAREN) {
+        if (PEEK(1)->kind != TK_RPAREN) {
             do {
-                if (arity >= MAX_ARGS) {
-                    fprintf(stderr, "error: more than %d arguments is not supported yet\n", MAX_ARGS);
-                    exit(1);
-                }
+                if (arity >= MAX_ARGS)
+                    error("more than 6 arguments not supported yet");
                 NEXT(1);
                 _expr(out);
                 fprintf(out, "  mov %%rax,%s\n", ARGREGS[arity++]);
             } while (PEEK(0)->kind == TK_COMMA);
-        }
+        } else NEXT(1);
         if (PEEK(0)->kind != TK_RPAREN) error("missing ')'");
         NEXT(1);
         fprintf(out, "  call %.*s\n", name->sz, name->ptr);
     } break;
     /* set variable */
     case TK_EQ: {
+        if (lvalue == LVALUE_REF) error("unexpected '&'");
         /* XXX: proper types/type sizes */
         if (idx == -1) {
+            if (lvalue != LVALUE_NONE) error("undefined variable");
             idx = nvars;
             sz = _newvar(name->ptr, name->sz, 8);
             fprintf(out, "  sub $%d,%%rsp\n", vars[idx].type_sz);
@@ -350,16 +351,20 @@ static void _ident(FILE *out) {
         }
         NEXT(1);
         _expr(out);
-        fprintf(out, "  mov %%rax,-%d(%%rbp)\n", sz);
+        if (lvalue == LVALUE_DEREF)
+            fprintf(out, "  push %%rax\n  mov -%d(%%rbp),%%rax\n  pop (%%rax)\n", sz);
+        else
+            fprintf(out, "  mov %%rax,-%d(%%rbp)\n", sz);
     } break;
     /* get variable */
     default:
-        if (idx == -1) {
-            fprintf(stderr, "error: undefined variable '%.*s'\n",
-                name->sz, name->ptr);
-            exit(1);
-        }
-        fprintf(out, "  mov -%d(%%rbp),%%rax\n", _getvarpos(idx));
+        if (idx == -1) error("undefined variable");
+        if (lvalue == LVALUE_REF)
+            fprintf(out, "  lea -%d(%%rbp),%%rax\n", _getvarpos(idx));
+        else if (lvalue == LVALUE_DEREF)
+            fprintf(out, "  mov -%d(%%rbp),%%rax\n  mov (%%rax),%%rax\n", _getvarpos(idx));
+        else
+            fprintf(out, "  mov -%d(%%rbp),%%rax\n", _getvarpos(idx));
     }
 }
 
@@ -416,33 +421,37 @@ static void _unary(FILE *out) {
         _expr(out);
         fprintf(out, "  neg %%rax\n");
         break;
-    /* XXX: &ref, *deref */
-    default:
-        fprintf(stderr, "error: unexpected '%.*s'\n",
-            PEEK(0)->sz, PEEK(0)->ptr);
-        exit(1);
+    case TK_AND:
+        if (PEEK(1)->kind != TK_ID) error("expected identifier");
+        NEXT(1);
+        return _ident(out, LVALUE_REF);
+    case TK_AT:
+        NEXT(1);
+        if (PEEK(0)->kind == TK_ID)
+            return _ident(out, LVALUE_DEREF);
+        _expr(out);
+        fprintf(out, "  mov (%%rax),%%rax\n");
+        break;
+    default: error("unexpected operator");
     }
 }
 
 static void _term(FILE *out) {
     switch (PEEK(0)->kind) {
     case TK_NOT: case TK_BNOT: case TK_SUB:
-    case TK_MUL: case TK_AND:
+    case TK_AT: case TK_AND:
         return _unary(out);
     case TK_INT: return _number(out);
     case TK_CHR: return _character(out);
     case TK_STR: return _string(out);
-    case TK_ID: return _ident(out);
+    case TK_ID: return _ident(out, LVALUE_NONE);
     case TK_LPAREN:
         NEXT(1);
         _expr(out);
         if (PEEK(0)->kind != TK_RPAREN) error("missing ')'");
         NEXT(1);
         return;
-    default:
-        fprintf(stderr, "error: unexpected '%.*s'\n",
-            PEEK(0)->sz, PEEK(0)->ptr);
-        exit(1);
+    default: error("unexpected token");
     }
 }
 
@@ -501,13 +510,32 @@ static void _body(FILE *out) {
     }
 }
 
+static int _allocate_vars(void) {
+    int in = 0, nvars = 0, idx;
+    token_t *cur = tok;
+    if (PEEK(0)->kind != TK_LBRACK) return 0;
+    do {
+        if (PEEK(0)->kind == TK_LBRACK) ++in;
+        if (PEEK(0)->kind == TK_RBRACK) --in;
+        if (PEEK(0)->kind == TK_ID && PEEK(1)->kind == TK_EQ) {
+            if (_getvar(PEEK(0)->ptr, PEEK(0)->sz) == -1) {
+                /* XXX: types */
+                idx = _newvar(PEEK(0)->ptr, PEEK(0)->sz, 8);
+            }
+        }
+        NEXT(1);
+    } while (PEEK(0)->kind != TK_EOF && in > 0);
+    tok = cur; /* restore position */
+    return (idx == -1)? 0 : _getvarpos(idx);
+}
+
 static void _kwfun(FILE *out) {
     token_t *name = PEEK(1);
     if (name->kind != TK_ID) error("expected function name");
     NEXT(2); /* skip fun + name */
-    int i, arg, idx = _getfun(name->ptr, name->sz);
+    int i, nvars, arg, idx = _getfun(name->ptr, name->sz);
     _funhdr(name->ptr, name->sz, out);
-    /* XXX: preallocate all local variables in a single instruction */
+    /* XXX: also preallocate arguments in a single instruction */
     if (PEEK(0)->kind != TK_LPAREN) error("missing '('");
     NEXT(1);
     funs[nfuns].arity = 0;
@@ -521,23 +549,17 @@ static void _kwfun(FILE *out) {
             if (PEEK(0)->kind != TK_ID) error("missing ')'");
             arg = _newvar(PEEK(0)->ptr, PEEK(0)->sz, 8);
             NEXT(1);
-            if (++funs[nfuns].arity > MAX_ARGS) {
-                fprintf(stderr, "error: more than %d arguments are not supported yet\n", MAX_ARGS);
-                exit(1);
-            }
+            if (++funs[nfuns].arity > MAX_ARGS)
+                error("more than 6 arguments not supported yet");
         }
         fprintf(out, "  sub $%d,%%rsp\n", arg);
-        for (i = 0; i < nvars; ++i)
+        for (i = 0; i < funs[nfuns].arity; ++i)
             fprintf(out, "  mov %s,-%d(%%rbp)\n", ARGREGS[i], _getvarpos(i));
     }
     if (PEEK(0)->kind != TK_RPAREN) error("missing ')'");
     NEXT(1);
-    if (idx != -1) {
-        fprintf(stderr, "error: redefinition of function '%.*s'\n",
-            name->sz, name->ptr);
-        exit(1);
-    }
-
+    if (idx != -1) error("cannot define function twice");
+    if (nvars = _allocate_vars()) fprintf(out, "  sub $%d,%%rsp\n", nvars);
     _body(out);
     _funftr(out);
 }
@@ -601,11 +623,9 @@ static void _stmt(FILE *out) {
     case TK_BREAK: return _kwbreak(out);
     case TK_WHILE: return _kwwhile(out);
     case TK_IF: return _kwif(out);
-    case TK_ID: return _ident(out);
-    default:
-        fprintf(stderr, "error: unexpected '%.*s'\n",
-            PEEK(0)->sz, PEEK(0)->ptr);
-        exit(1);
+    case TK_ID: return _ident(out, LVALUE_NONE);
+    case TK_AT: return _unary(out);
+    default: error("unexpected token");
     }
 }
 

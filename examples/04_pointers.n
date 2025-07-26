@@ -1,0 +1,10 @@
+extern putnum
+
+fun main() {
+    a = 36
+    b = &a
+    @b = 69
+    putnum(@b)
+    return 0
+}
+
