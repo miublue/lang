@@ -1,9 +1,4 @@
-extern putd, putchar
-
-fun putnum(n) {
-    putd(n)
-    putchar('\n')
-}
+extern putnum
 
 fun add(a, b) a + b
 

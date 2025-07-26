@@ -1,9 +1,4 @@
-extern putstr, putd, putchar
-
-fun putnum(num) {
-    putd(num)
-    putchar('\n')
-}
+extern putstr, putnum
 
 fun fizzbuzz(n) {
     i = 1

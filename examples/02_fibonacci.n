@@ -1,9 +1,4 @@
-extern putd, putchar
-
-fun putnum(num) {
-    putd(num)
-    putchar('\n')
-}
+extern putnum
 
 fun fib(n) {
     a = 0

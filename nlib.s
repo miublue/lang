@@ -393,6 +393,11 @@ putstr:
   call    write
   popq    %rbx
   ret
+putnum:
+  call    putd
+  movq    $10, %rdi
+  call    putchar
+  ret
 isalpha:
   andl    $-33, %edi
   xorl    %eax, %eax
