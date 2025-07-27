@@ -3,14 +3,14 @@ Toy compiler for a tiny language that i made for fun. It is not a serious projec
 I didn't feel like thinking up a name so i picked a random letter (like all good languages do).  
 (Only targets x86_64 linux btw).
 
-## Building
+## Installation
 Compile with:
 ```sh
-make
+make install
 ```
 
 ## Example
-Example hello world:
+Hello world:
 ```n
 fun main() {
     extern putstr
