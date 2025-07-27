@@ -89,35 +89,26 @@ static const char *GENOPS[MAX_TOKENS] = {
     [TK_SHL] =  "  mov %rax,%rcx\n"
                 "  pop %rax\n"
                 "  shl %cl,%rax\n",
-
     [TK_SHR] =  "  mov %rax,%rcx\n"
                 "  pop %rax\n",
                 "  sar %cl,%rax\n",
-
     [TK_AND] =  "  pop %rdi\n"
                 "  and %rdi,%rax\n",
-
     [TK_XOR] =  "  pop %rdi\n"
                 "  xor %rdi,%rax\n",
-
     [TK_OR]  =  "  pop %rdi\n"
                 "  or %rdi,%rax\n",
-
     [TK_ADD] =  "  pop %rdi\n"
                 "  add %rdi,%rax\n",
-
     [TK_SUB] =  "  mov %rax,%rdi\n"
                 "  pop %rax\n"
                 "  sub %rdi,%rax\n",
-
     [TK_MUL] =  "  pop %rdi\n"
                 "  imul %rdi,%rax\n",
-
     [TK_DIV] =  "  mov %rax,%rdi\n"
                 "  pop %rax\n"
                 "  cqo\n"
                 "  idiv %rdi\n",
-
     [TK_MOD] =  "  mov %rax,%rdi\n"
                 "  pop %rax\n"
                 "  cqo\n"
@@ -250,8 +241,7 @@ void parse_file(FILE *file) {
     text_sz = ftell(file);
     text = malloc(text_sz);
     fseek(file, 0, SEEK_SET);
-    if (!fread(text, sizeof(char), text_sz, file))
-        error("could not read from file");
+    if (!fread(text, sizeof(char), text_sz, file)) error("could not read from file");
     i = 0;
     toks_sz = 0;
     toks = malloc(sizeof(token_t) * (toks_cap = ALLOC_SZ));
@@ -274,8 +264,7 @@ static int _getfun(char *name, int sz) {
     int i;
     for (i = 0; i < nfuns; ++i) {
         if (sz != funs[i].sz) continue;
-        if (!strncmp(funs[i].name, name, sz))
-            return i;
+        if (!strncmp(funs[i].name, name, sz)) return i;
     }
     return -1;
 }
@@ -284,8 +273,7 @@ static int _getvar(char *name, int sz) {
     int i;
     for (i = 0; i < nvars; ++i) {
         if (sz != vars[i].sz) continue;
-        if (!strncmp(vars[i].name, name, sz))
-            return i;
+        if (!strncmp(vars[i].name, name, sz)) return i;
     }
     return -1;
 }
@@ -326,8 +314,7 @@ static void _ident(FILE *out, int lvalue) {
         int arity = 0;
         if (PEEK(1)->kind != TK_RPAREN) {
             do {
-                if (arity >= MAX_ARGS)
-                    error("more than 6 arguments not supported yet");
+                if (arity >= MAX_ARGS) error("more than 6 arguments not supported yet");
                 NEXT(1);
                 _expr(out);
                 fprintf(out, "  mov %%rax,%s\n", ARGREGS[arity++]);
@@ -353,8 +340,7 @@ static void _ident(FILE *out, int lvalue) {
         _expr(out);
         if (lvalue == LVALUE_DEREF)
             fprintf(out, "  push %%rax\n  mov -%d(%%rbp),%%rax\n  pop (%%rax)\n", sz);
-        else
-            fprintf(out, "  mov %%rax,-%d(%%rbp)\n", sz);
+        else fprintf(out, "  mov %%rax,-%d(%%rbp)\n", sz);
     } break;
     /* get variable */
     default:
@@ -363,8 +349,7 @@ static void _ident(FILE *out, int lvalue) {
             fprintf(out, "  lea -%d(%%rbp),%%rax\n", _getvarpos(idx));
         else if (lvalue == LVALUE_DEREF)
             fprintf(out, "  mov -%d(%%rbp),%%rax\n  mov (%%rax),%%rax\n", _getvarpos(idx));
-        else
-            fprintf(out, "  mov -%d(%%rbp),%%rax\n", _getvarpos(idx));
+        else fprintf(out, "  mov -%d(%%rbp),%%rax\n", _getvarpos(idx));
     }
 }
 
@@ -415,8 +400,7 @@ static void _unary(FILE *out) {
         fprintf(out, "  cmp $0,%%rax\n  sete %%al\n  movzx  %%al,%%rax\n");
         break;
     case TK_SUB:
-        if (PEEK(1)->kind == TK_INT)
-            return _number(out);
+        if (PEEK(1)->kind == TK_INT) return _number(out);
         NEXT(1);
         _expr(out);
         fprintf(out, "  neg %%rax\n");
@@ -427,8 +411,7 @@ static void _unary(FILE *out) {
         return _ident(out, LVALUE_REF);
     case TK_AT:
         NEXT(1);
-        if (PEEK(0)->kind == TK_ID)
-            return _ident(out, LVALUE_DEREF);
+        if (PEEK(0)->kind == TK_ID) return _ident(out, LVALUE_DEREF);
         _expr(out);
         fprintf(out, "  mov (%%rax),%%rax\n");
         break;
@@ -439,8 +422,7 @@ static void _unary(FILE *out) {
 static void _term(FILE *out) {
     switch (PEEK(0)->kind) {
     case TK_NOT: case TK_BNOT: case TK_SUB:
-    case TK_AT: case TK_AND:
-        return _unary(out);
+    case TK_AT: case TK_AND: return _unary(out);
     case TK_INT: return _number(out);
     case TK_CHR: return _character(out);
     case TK_STR: return _string(out);
@@ -465,12 +447,7 @@ static int _precop(int kind, int prec) {
 static void _compare_expr(FILE *out, int op, int prec) {
     _binary(out, prec+1);
     if (prec < PREC_COMPARE) error("&& and || are not implemented yet");
-    fprintf(out, 
-        "  pop %%rdi\n"
-        "  cmp %%rax,%%rdi\n"
-        "  %s %%al\n"
-        "  movzb %%al,%%rax\n",
-        GENCMP[op]);
+    fprintf(out, "  pop %%rdi\n  cmp %%rax,%%rdi\n  %s %%al\n  movzb %%al,%%rax\n", GENCMP[op]);
 }
 
 static void _binary_expr(FILE *out, int op, int prec) {
@@ -518,10 +495,9 @@ static int _allocate_vars(void) {
         if (PEEK(0)->kind == TK_LBRACK) ++in;
         if (PEEK(0)->kind == TK_RBRACK) --in;
         if (PEEK(0)->kind == TK_ID && PEEK(1)->kind == TK_EQ) {
-            if (_getvar(PEEK(0)->ptr, PEEK(0)->sz) == -1) {
-                /* XXX: types */
+            /* XXX: types */
+            if (_getvar(PEEK(0)->ptr, PEEK(0)->sz) == -1)
                 idx = _newvar(PEEK(0)->ptr, PEEK(0)->sz, 8);
-            }
         }
         NEXT(1);
     } while (PEEK(0)->kind != TK_EOF && in > 0);
@@ -591,12 +567,10 @@ static void _kwwhile(FILE *out) {
     NEXT(1);
     fprintf(out, ".L__WHILE.%d:\n", cur);
     _expr(out);
-    fprintf(out, "  testq %%rax,%%rax\n"
-                 "  jz .L__WHILE_END.%d\n", cur);
+    fprintf(out, "  testq %%rax,%%rax\n  jz .L__WHILE_END.%d\n", cur);
     _body(out);
     cloop = cur;
-    fprintf(out, "  jmp .L__WHILE.%d\n"
-                 ".L__WHILE_END.%d:\n", cur, cur);
+    fprintf(out, "  jmp .L__WHILE.%d\n.L__WHILE_END.%d:\n", cur, cur);
 }
 
 static void _kwif(FILE *out) {
@@ -636,10 +610,8 @@ void gen_file(FILE *out) {
     tok = toks;
     fprintf(out, ".text\n.globl _start\n_start:\n  xor %%rax,%%rax\n  call main\n");
     fprintf(out, "  mov %%rax,%%rdi\n  mov $60,%%rax\n  syscall\n");
-    do {
-        _stmt(out);
-        /*_decl(file);*/
-    } while (tok->kind != TK_EOF);
+    do _stmt(out);
+    while (tok->kind != TK_EOF);
     if (_getfun("main", 4) == -1) error("missing 'main' function");
     int i;
     fprintf(out, ".data\n");
@@ -694,10 +666,8 @@ int main(int argc, const char **argv) {
     sprintf(output_asm, "%s.s", input_path? input_path : "a");
     input_file = _open(input_path, "r");
     output_file = output_stdout? stdout : _open(output_asm, "w+");
-
     parse_file(input_file);
     gen_file(output_file);
-
     fclose(input_file);
     fclose(output_file);
     free(toks);

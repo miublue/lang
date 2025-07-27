@@ -109,6 +109,7 @@ memcpy:
   xorl    %r8d, %r8d
   xorl    %eax, %eax
   jmp     .L4
+
 strfind:
   testl   %edx, %edx
   jle     .L21
@@ -127,6 +128,7 @@ strfind:
 .L21:
   xorl    %eax, %eax
   ret
+
 streq:
   testl   %edx, %edx
   jle     .L28
@@ -146,6 +148,7 @@ streq:
 .L28:
   movl    $1, %eax
   ret
+
 strlen:
   cmpb    $0, (%rdi)
   je      .L34
@@ -158,6 +161,7 @@ strlen:
 .L34:
   xorl    %eax, %eax
   ret
+
 strtoi:
   testl   %esi, %esi
   jle     .L42
@@ -175,6 +179,7 @@ strtoi:
 .L42:
   xorl    %eax, %eax
   ret
+
 itostr:
   pushq   %rbp
   movslq  %edx, %rdx
@@ -229,6 +234,7 @@ itostr:
   leave
   xorl    %eax, %eax
   ret
+
 getc:
   subq    $24, %rsp
   movl    $1, %edx
@@ -240,6 +246,7 @@ getc:
   cmove   %edx, %eax
   addq    $24, %rsp
   ret
+
 getchar:
   subq    $24, %rsp
   movl    $1, %edx
@@ -252,6 +259,7 @@ getchar:
   cmove   %edx, %eax
   addq    $24, %rsp
   ret
+
 gets:
   subq    $8, %rsp
   movslq  %esi, %rdx
@@ -260,6 +268,7 @@ gets:
   call    read
   addq    $8, %rsp
   ret
+
 puts:
   subq    $8, %rsp
   movslq  %esi, %rdx
@@ -268,6 +277,7 @@ puts:
   call    write
   addq    $8, %rsp
   ret
+
 putc:
   subq    $24, %rsp
   movl    $1, %edx
@@ -276,6 +286,7 @@ putc:
   call    write
   addq    $24, %rsp
   ret
+
 putchar:
   subq    $24, %rsp
   movl    $1, %edx
@@ -285,6 +296,7 @@ putchar:
   call    write
   addq    $24, %rsp
   ret
+
 putd:
   pushq   %rbp
   movl    %edi, %ecx
@@ -372,6 +384,7 @@ putd:
   popq    %r12
   popq    %rbp
   ret
+
 putstr:
   pushq   %rbx
   movq    %rdi, %rbx
@@ -393,11 +406,13 @@ putstr:
   call    write
   popq    %rbx
   ret
+
 putnum:
   call    putd
   movq    $10, %rdi
   call    putchar
   ret
+
 isalpha:
   andl    $-33, %edi
   xorl    %eax, %eax
@@ -405,12 +420,14 @@ isalpha:
   cmpb    $25, %dil
   setbe   %al
   ret
+
 isdigit:
   subl    $48, %edi
   xorl    %eax, %eax
   cmpb    $9, %dil
   setbe   %al
   ret
+
 isalnum:
   movl    %edi, %eax
   movl    $1, %edx
@@ -425,6 +442,7 @@ isalnum:
 .L91:
   movl    %edx, %eax
   ret
+
 isspace:
   subl    $9, %edi
   xorl    %eax, %eax
