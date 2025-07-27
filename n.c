@@ -300,7 +300,8 @@ static void _funhdr(char *name, int sz, FILE *out) {
 }
 
 static void _funftr(FILE *out) {
-    fprintf(out, "  leave\n  ret\n");
+    fprintf(out, ".L__%.*s.ret:\n  leave\n  ret\n",
+        funs[nfuns-1].sz, funs[nfuns-1].name);
 }
 
 static void _ident(FILE *out, int lvalue) {
@@ -383,7 +384,7 @@ static void _character(FILE *out) {
 
 static void _string(FILE *out) {
     strs[nstrs++] = PEEK(0);
-    fprintf(out, "  mov $.string.%d,%%rax\n", nstrs-1);
+    fprintf(out, "  mov $.L__string.%d,%%rax\n", nstrs-1);
     NEXT(1);
 }
 
@@ -543,7 +544,7 @@ static void _kwfun(FILE *out) {
 static void _kwreturn(FILE *out) {
     NEXT(1);
     _expr(out);
-    _funftr(out);
+    fprintf(out, "  jmp .L__%.*s.ret\n", funs[nfuns-1].sz, funs[nfuns-1].name);
 }
 
 static void _kwextern(FILE *out) {
@@ -558,19 +559,19 @@ static void _kwextern(FILE *out) {
 static void _kwbreak(FILE *out) {
     NEXT(1);
     if (cloop == 0) error("unexpected break");
-    fprintf(out, "  jmp .L__WHILE_END.%d\n", cloop-1);
+    fprintf(out, "  jmp .L__while.end.%d\n", cloop-1);
 }
 
 static void _kwwhile(FILE *out) {
     int cur = nlabls++;
     cloop = nlabls;
     NEXT(1);
-    fprintf(out, ".L__WHILE.%d:\n", cur);
+    fprintf(out, ".L__while.%d:\n", cur);
     _expr(out);
-    fprintf(out, "  testq %%rax,%%rax\n  jz .L__WHILE_END.%d\n", cur);
+    fprintf(out, "  testq %%rax,%%rax\n  jz .L__while.end.%d\n", cur);
     _body(out);
     cloop = cur;
-    fprintf(out, "  jmp .L__WHILE.%d\n.L__WHILE_END.%d:\n", cur, cur);
+    fprintf(out, "  jmp .L__while.%d\n.L__while.end.%d:\n", cur, cur);
 }
 
 static void _kwif(FILE *out) {
@@ -578,15 +579,15 @@ static void _kwif(FILE *out) {
     NEXT(1);
     _expr(out);
     fprintf(out, "  testq %%rax,%%rax\n"
-                 "  jz .L__IF_END.%d\n", cur);
+                 "  jz .L__if.end.%d\n", cur);
     _body(out);
-    fprintf(out, "  jmp .L__IFELSE_END.%d\n"
-                 ".L__IF_END.%d:\n", cur, cur);
+    fprintf(out, "  jmp .L__ifelse.end.%d\n"
+                 ".L__if.end.%d:\n", cur, cur);
     if (PEEK(0)->kind == TK_ELSE) {
         NEXT(1);
         _body(out);
     }
-    fprintf(out, ".L__IFELSE_END.%d:\n", cur);
+    fprintf(out, ".L__ifelse.end.%d:\n", cur);
 }
 
 static void _stmt(FILE *out) {
@@ -617,7 +618,7 @@ void gen_file(FILE *out) {
     fprintf(out, ".data\n");
     for (i = 0; i < nstrs; ++i) {
         token_t *tok = strs[i];
-        fprintf(out, ".string.%d: .asciz \"%.*s\"\n.align 8\n",
+        fprintf(out, ".L__string.%d: .asciz \"%.*s\"\n.align 8\n",
             i, tok->sz, tok->ptr);
     }
 }
@@ -639,30 +640,25 @@ static void _runasm(const char *path, const char *out) {
 }
 
 void usage(const char *prog) {
-    printf("usage: %s <input> [-h|-s|-c|-o output]\n", prog);
+    printf("usage: %s [-h|-s|-o output] <input>\n", prog);
     exit(0);
 }
 
-/* XXX: -c should assemble but not link, -s should generate assembly but not assemble */
 int main(int argc, const char **argv) {
     FILE *input_file = NULL, *output_file = NULL;
     const char *input_path = NULL, *output_path = NULL;
     char output_asm[ALLOC_SZ] = {0};
-    int i, assemble = 1, output_stdout = 0;
-    if (argc < 2) usage(argv[0]);
+    int i, output_stdout = 0;
 
     for (i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "-h")) usage(argv[0]);
-        else if (!strcmp(argv[i], "-c"))
-            assemble = 0;
         else if (!strcmp(argv[i], "-s"))
             output_stdout = 1;
         else if (!strcmp(argv[i], "-o"))
             output_path = argv[++i];
-        else
-            input_path = argv[i];
+        else input_path = argv[i];
     }
-
+    if (!input_path) usage(argv[0]);
     sprintf(output_asm, "%s.s", input_path? input_path : "a");
     input_file = _open(input_path, "r");
     output_file = output_stdout? stdout : _open(output_asm, "w+");
@@ -672,7 +668,7 @@ int main(int argc, const char **argv) {
     fclose(output_file);
     free(toks);
     free(text);
-    if (assemble && !output_stdout) _runasm(output_asm, (output_path)? output_path : "a.out");
+    if (!output_stdout) _runasm(output_asm, (output_path)? output_path : "a.out");
     return 0;
 }
 
