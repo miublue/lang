@@ -17,7 +17,7 @@ enum { LVALUE_NONE, LVALUE_REF, LVALUE_DEREF };
 enum {
     TK_EOF, TK_ID, TK_INT, TK_STR, TK_CHR,
     TK_IF, TK_ELSE, TK_WHILE, TK_BREAK,
-    TK_FUN, TK_RETURN, TK_EXTERN,
+    TK_FUN, TK_RETURN, TK_EXTERN, TK_INLINE,
     TK_LBRACK, TK_RBRACK, TK_LPAREN, TK_RPAREN,
     TK_COMMA, TK_ADD, TK_SUB, TK_MUL, TK_DIV, TK_MOD,
     TK_BAND, TK_BOR, TK_BNOT, TK_EQ, TK_EQEQ, TK_NEQ,
@@ -57,7 +57,7 @@ static const char *OPERATORS[] = {
 
 static const char *KEYWORDS[] = {
     "if", "else", "while", "break",
-    "fun", "return", "extern",
+    "fun", "return", "extern", "inline",
 };
 
 /* XXX: these structures are literally the same */
@@ -227,6 +227,20 @@ static token_t _next_token(void) {
         }
         int kwrd = _is_keyword(tok.ptr, tok.sz);
         if (kwrd != -1) tok.kind = kwrd+TK_IF;
+        if (tok.kind == TK_INLINE) {
+            _skip_space();
+            if (PEEK(0) != '{') error("missing '{'");
+            NEXT(1);
+            tok.ptr = text+i;
+            tok.sz = 0;
+            while (BOUND(0) && PEEK(0) != '}') {
+                ++tok.sz;
+                NEXT(1);
+            }
+            if (!BOUND(0)) error("missing '}'");
+            NEXT(1);
+            return tok;
+        }
         return tok;
     }
     error("invalid character");
@@ -476,7 +490,7 @@ static void _expr(FILE *out) {
 
 static void _body(FILE *out) {
     if (PEEK(0)->kind != TK_LBRACK) {
-        if (PEEK(0)->kind >= TK_IF && PEEK(0)->kind <= TK_EXTERN) _stmt(out);
+        if (PEEK(0)->kind >= TK_IF && PEEK(0)->kind <= TK_INLINE) _stmt(out);
         else _expr(out);
     } else {
         NEXT(1);
@@ -556,6 +570,11 @@ static void _kwextern(FILE *out) {
     } while (PEEK(0)->kind == TK_COMMA);
 }
 
+static void _kwinline(FILE *out) {
+    fprintf(out, "%.*s\n", PEEK(0)->sz, PEEK(0)->ptr);
+    NEXT(1);
+}
+
 static void _kwbreak(FILE *out) {
     NEXT(1);
     if (cloop == 0) error("unexpected break");
@@ -595,6 +614,7 @@ static void _stmt(FILE *out) {
     case TK_FUN: return _kwfun(out);
     case TK_RETURN: return _kwreturn(out);
     case TK_EXTERN: return _kwextern(out);
+    case TK_INLINE: return _kwinline(out);
     case TK_BREAK: return _kwbreak(out);
     case TK_WHILE: return _kwwhile(out);
     case TK_IF: return _kwif(out);
