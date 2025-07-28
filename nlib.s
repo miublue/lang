@@ -10,9 +10,43 @@ write:
   syscall
   ret
 
+mmap:
+  mov $9, %rax
+  syscall
+  ret
+
+munmap:
+  mov $11, %rax
+  syscall
+  ret
+
 exit:
   mov $60, %rax
   syscall
+
+setbyte:
+  addq %rsi,%rdi
+  movb %dl,(%rdi)
+  retq
+
+alloc:
+  movq %rdi,%rsi
+  addq $8,%rsi
+  movq $0,%rdi
+  movq $7,%rdx
+  movq $34,%r10
+  movq $-1,%r8
+  movq $0,%r9
+  callq mmap
+  movq %rsi,(%rax)
+  addq $8,%rax
+  retq
+
+free:
+  subq $8,%rdi
+  movq (%rdi),%rsi
+  callq munmap
+  retq
 
 memcpy:
   testl   %edx, %edx
