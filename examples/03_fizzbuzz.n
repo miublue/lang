@@ -1,7 +1,7 @@
-extern putstr, putnum
+extern fun putstr(s: str), fun putnum(n: int)
 
-fun fizzbuzz(n) {
-    i = 1
+fun fizzbuzz(n: int) {
+    i: int = 1
     while (i <= n) {
         if (i % 15 == 0) putstr("FizzBuzz\n")
         else if (i % 3 == 0) putstr("Fizz\n")

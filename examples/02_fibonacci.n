@@ -1,11 +1,11 @@
-extern putnum
+extern fun putnum(n: int)
 
-fun fib(n) {
-    a = 0
-    b = 1
+fun fib(n: int) {
+    a: int = 0
+    b: int = 1
     while (a < n) {
         putnum(a)
-        c = a + b
+        c: int = a + b
         a = b
         b = c
     }

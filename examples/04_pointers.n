@@ -1,10 +1,10 @@
 extern putnum
+# extern fun putnum(n: int)
 
 fun main() {
     a = 36
-    # XXX: my dumbass didn't add any statement separators (like semicolons or even newlines)
-    # so if i used '*' as the deref operator, the compiler would think it's trying to multiply
-    # by the previous line's expression, which is why i made it '@', and i fucking hate it.
+    # XXX: add semicolons as statement separators
+    # XXX: 'ptr' type should keep track of which type it points to
     b: ptr = &a
     @b = 69
     putnum(@b)

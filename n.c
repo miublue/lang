@@ -19,11 +19,11 @@ enum {
     TK_IF, TK_ELSE, TK_WHILE, TK_BREAK,
     TK_FUN, TK_RETURN, TK_EXTERN, TK_INLINE,
     TK_LBRACK, TK_RBRACK, TK_LPAREN, TK_RPAREN,
-    TK_LSQUARE, TK_RSQUARE, TK_COLON,
+    TK_LSQUARE, TK_RSQUARE, TK_COLON, TK_COMMA,
     TK_ADD, TK_SUB, TK_MUL, TK_DIV, TK_MOD,
     TK_BAND, TK_BOR, TK_BNOT, TK_EQ, TK_EQEQ, TK_NEQ,
     TK_LT, TK_GT, TK_LEQ, TK_GEQ, TK_SHL, TK_SHR,
-    TK_AND, TK_OR, TK_AT, TK_NOT, TK_XOR, TK_COMMA,
+    TK_AND, TK_OR, TK_AT, TK_NOT, TK_XOR,
     MAX_TOKENS
 };
 
@@ -50,11 +50,12 @@ static const char *ARGREGS[MAX_ARGS] = {
     "%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9",
 };
 
-static const char *CHAROPS = "{}()[]:+-*/%&|@!=<>~^,";
+static const char *CHAROPS = "{}()[]:,+-*/%&|@!=<>~^";
 static const char *OPERATORS[] = {
-    "{", "}", "(", ")", "[", "]", ":", "+", "-", "*", "/", "%",
-    "&&", "||", "!", "=", "==", "!=", "<", ">", "<=",
-    ">=", "<<", ">>", "&", "|", "@", "~", "^", ",",
+    "{", "}", "(", ")", "[", "]", ":", ",",
+    "+", "-", "*", "/", "%", "&&", "||",
+    "!", "=", "==", "!=", "<", ">", "<=",
+    ">=", "<<", ">>", "&", "|", "@", "~", "^",
 };
 
 static const char *KEYWORDS[] = {
@@ -74,10 +75,6 @@ typedef struct {
 } type_t;
 
 typedef struct {
-/*
-    uint32_t type_sz, sz;
-    char *name;
-*/
     uint32_t sz;
     char *name;
     type_t type;
@@ -97,6 +94,7 @@ static type_t types[ALLOC_SZ] = {
     (type_t) { 8, "str" },
 };
 static uint32_t types_sz = LENGTH(types);
+/* XXX: 'ptr' should keep track of which type it points to */
 
 static const char *GENCMP[MAX_TOKENS] = {
     [TK_EQEQ] = "sete",
@@ -148,7 +146,7 @@ static token_t *strs[MAX_STRINGS];
 static uint32_t nvars = 0, nfuns = 0, nstrs = 0;
 static uint32_t nlabls = 0, cloop = 0;
 
-/* XXX: small core library, arrays, types, '&&', '||' */
+/* XXX: small core library, semicolons, arrays, types, '&&', '||' */
 void error(char *msg) {
     fprintf(stderr, "error: %s\n", msg);
     exit(1);
@@ -328,6 +326,8 @@ static int _newvar(char *name, int sz, type_t type) {
 }
 
 static type_t _gettype(char *ptr, int sz) {
+    /* strings are just pointers */
+    if (sz == 3 && !strncmp(ptr, "str", 3)) return _gettype("ptr", 3);
     int i;
     for (i = 0; i < types_sz; ++i) {
         if (sz != strlen(types[i].name)) continue;
@@ -348,11 +348,12 @@ static type_t _checktype(type_t fallback) {
     return type;
 }
 
+static void _newfun(fun_t fun) {
+    funs[nfuns++] = fun;
+}
+
 static void _funhdr(char *name, int sz, FILE *out) {
     fprintf(out, "%.*s:\n  push %%rbp\n  mov %%rsp,%%rbp\n", sz, name);
-    funs[nfuns].sz = sz;
-    funs[nfuns].name = name;
-    /*++nfuns;*/
     nvars = 0;
 }
 
@@ -396,20 +397,28 @@ static type_t _ident(FILE *out, int lvalue) {
     if (cln) error("unexpected ':'");
     /* call function */
     if (PEEK(0)->kind == TK_LPAREN) {
-        int fun = _getfun(name->ptr, name->sz);
+        int fidx = _getfun(name->ptr, name->sz);
+        fun_t fun;
+        if (fidx != -1) fun = funs[fidx];
         int arity = 0;
+        type_t argtype;
         /* XXX: also check arity and argument types */
-        type = (fun != -1)? funs[fun].ret : _gettype("int", 3);
+        type = (fidx != -1)? fun.ret : _gettype("int", 3);
         if (PEEK(1)->kind != TK_RPAREN) {
             do {
                 if (arity >= MAX_ARGS) error("more than 6 arguments not supported yet");
                 NEXT(1);
-                _expr(out);
+                argtype = _expr(out);
+                if (fidx != -1) {
+                    if (strcmp(argtype.name, fun.args[arity].name) != 0)
+                        error("argument type mismatch");
+                }
                 fprintf(out, "  mov %%rax,%s\n", ARGREGS[arity++]);
             } while (PEEK(0)->kind == TK_COMMA);
         } else NEXT(1);
         if (PEEK(0)->kind != TK_RPAREN) error("missing ')'");
         NEXT(1);
+        if (fidx != -1 && arity != fun.arity) error("mismatched arguments");
         fprintf(out, "  call %.*s\n", name->sz, name->ptr);
         return type;
     }
@@ -591,46 +600,56 @@ static int _allocate_vars(void) {
     return (idx == -1)? 0 : _getvarpos(idx);
 }
 
-static void _kwfun(FILE *out) {
-    token_t *name = PEEK(1);
-    if (name->kind != TK_ID) error("expected function name");
-    NEXT(2); /* skip fun + name */
-    int i, nvars, arg, idx = _getfun(name->ptr, name->sz);
+static fun_t _mkfun(FILE *out, int local) {
+    token_t *name = PEEK(1), *argname;
     type_t argtype;
-    token_t *argname;
-    if (idx != -1) error("cannot define function twice");
-    _funhdr(name->ptr, name->sz, out);
-    /* XXX: also preallocate arguments in a single instruction */
+    int i, idx = _getfun(name->ptr, name->sz);
+    fun_t fun;
+    if (name->kind != TK_ID) error("expected function name");
+    if (idx != -1) error("cannot redefine function");
+    NEXT(2); /* skip fun + name */
+    fun.name = name->ptr;
+    fun.sz = name->sz;
+    fun.arity = 0;
+    if (local) _funhdr(fun.name, fun.sz, out);
     if (PEEK(0)->kind != TK_LPAREN) error("missing '('");
     NEXT(1);
-    funs[nfuns].arity = 0;
     if (PEEK(0)->kind == TK_ID) {
         argname = PEEK(0);
         NEXT(1);
         argtype = _checktype(_gettype("int", 3));
-        arg = _newvar(argname->ptr, argname->sz, argtype);
-        funs[nfuns].args[funs[nfuns].arity++] = argtype;
+        if (local) _newvar(argname->ptr, argname->sz, argtype);
+        fun.args[fun.arity++] = argtype;
         while (PEEK(0)->kind == TK_COMMA) {
             NEXT(1);
             if (PEEK(0)->kind != TK_ID) error("missing ')'");
             argname = PEEK(0);
             NEXT(1);
             argtype = _checktype(_gettype("int", 3));
-            arg = _newvar(argname->ptr, argname->sz, argtype);
-            funs[nfuns].args[funs[nfuns].arity++] = argtype;
-            if (funs[nfuns].arity > MAX_ARGS)
+            if (local) _newvar(argname->ptr, argname->sz, argtype);
+            fun.args[fun.arity++] = argtype;
+            if (fun.arity > MAX_ARGS)
                 error("more than 6 arguments not supported yet");
-        }
-        fprintf(out, "  sub $%d,%%rsp\n", arg);
-        for (i = 0; i < funs[nfuns].arity; ++i) {
-            fprintf(out, "  mov %s,-%d(%%rbp)\n", ARGREGS[i], _getvarpos(i));
         }
     }
     if (PEEK(0)->kind != TK_RPAREN) error("missing ')'");
     NEXT(1);
-    funs[nfuns].ret = _checktype(_gettype("int", 3));
-    if (nvars = _allocate_vars()) fprintf(out, "  sub $%d,%%rsp\n", nvars);
-    ++nfuns;
+    fun.ret = _checktype(_gettype("int", 3));
+    _newfun(fun);
+    return fun;
+}
+
+static void _kwfun(FILE *out) {
+    fun_t fun = _mkfun(out, 1);
+    int nvars = _allocate_vars();
+    if (fun.arity) {
+        nvars += _getvarpos(fun.arity);
+        fprintf(out, "  sub $%d,%%rsp\n", nvars);
+        for (i = 0; i < fun.arity; ++i)
+            fprintf(out, "  mov %s,-%d(%%rbp)\n", ARGREGS[i], _getvarpos(i));
+    } else {
+        fprintf(out, "  sub $%d,%%rsp\n", nvars);
+    }
     _body(out);
     _funftr(out);
 }
@@ -646,8 +665,13 @@ static void _kwreturn(FILE *out) {
 static void _kwextern(FILE *out) {
     do {
         NEXT(1);
-        if (PEEK(0)->kind != TK_ID) error("invalid external symbol");
-        fprintf(out, ".extern %.*s\n", PEEK(0)->sz, PEEK(0)->ptr);
+        token_t *sym = PEEK(0);
+        if (sym->kind == TK_FUN) {
+            sym = PEEK(1);
+            _mkfun(out, 0);
+            NEXT(-1); /* womp womp */
+        } else if (sym->kind != TK_ID) error("invalid external symbol");
+        fprintf(out, ".extern %.*s\n", sym->sz, sym->ptr);
         NEXT(1);
     } while (PEEK(0)->kind == TK_COMMA);
 }
