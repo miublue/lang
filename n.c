@@ -503,7 +503,7 @@ static void _body(FILE *out) {
 }
 
 static int _allocate_vars(void) {
-    int in = 0, nvars = 0, idx;
+    int in = 0, nvars = 0, idx = 0;
     token_t *cur = tok;
     if (PEEK(0)->kind != TK_LBRACK) return 0;
     do {
@@ -513,6 +513,7 @@ static int _allocate_vars(void) {
             /* XXX: types */
             if (_getvar(PEEK(0)->ptr, PEEK(0)->sz) == -1)
                 idx = _newvar(PEEK(0)->ptr, PEEK(0)->sz, 8);
+            NEXT(1);
         }
         NEXT(1);
     } while (PEEK(0)->kind != TK_EOF && in > 0);
