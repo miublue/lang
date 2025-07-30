@@ -19,10 +19,12 @@ enum {
     TK_IF, TK_ELSE, TK_WHILE, TK_BREAK,
     TK_FUN, TK_RETURN, TK_EXTERN, TK_INLINE,
     TK_LBRACK, TK_RBRACK, TK_LPAREN, TK_RPAREN,
-    TK_COMMA, TK_ADD, TK_SUB, TK_MUL, TK_DIV, TK_MOD,
+    TK_LSQUARE, TK_RSQUARE, TK_COLON,
+    TK_ADD, TK_SUB, TK_MUL, TK_DIV, TK_MOD,
     TK_BAND, TK_BOR, TK_BNOT, TK_EQ, TK_EQEQ, TK_NEQ,
     TK_LT, TK_GT, TK_LEQ, TK_GEQ, TK_SHL, TK_SHR,
-    TK_AND, TK_OR, TK_AT, TK_NOT, TK_XOR, MAX_TOKENS
+    TK_AND, TK_OR, TK_AT, TK_NOT, TK_XOR, TK_COMMA,
+    MAX_TOKENS
 };
 
 enum {
@@ -48,11 +50,11 @@ static const char *ARGREGS[MAX_ARGS] = {
     "%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9",
 };
 
-static const char *CHAROPS = "{}(),+-*/%&|@!=<>~^";
+static const char *CHAROPS = "{}()[]:+-*/%&|@!=<>~^,";
 static const char *OPERATORS[] = {
-    "{", "}", "(", ")", ",", "+", "-", "*", "/", "%",
+    "{", "}", "(", ")", "[", "]", ":", "+", "-", "*", "/", "%",
     "&&", "||", "!", "=", "==", "!=", "<", ">", "<=",
-    ">=", "<<", ">>", "&", "|", "@", "~", "^",
+    ">=", "<<", ">>", "&", "|", "@", "~", "^", ",",
 };
 
 static const char *KEYWORDS[] = {
@@ -67,14 +69,34 @@ typedef struct {
 } token_t;
 
 typedef struct {
+    int sz;
+    char *name;
+} type_t;
+
+typedef struct {
+/*
     uint32_t type_sz, sz;
     char *name;
+*/
+    uint32_t sz;
+    char *name;
+    type_t type;
 } var_t;
 
 typedef struct {
     uint32_t arity, sz;
+    type_t ret, args[MAX_ARGS];
     char *name;
 } fun_t;
+
+/* 8 byte aligned types */
+static type_t types[ALLOC_SZ] = {
+    (type_t) { 8, "char" },
+    (type_t) { 8, "int" },
+    (type_t) { 8, "ptr" },
+    (type_t) { 8, "str" },
+};
+static uint32_t types_sz = LENGTH(types);
 
 static const char *GENCMP[MAX_TOKENS] = {
     [TK_EQEQ] = "sete",
@@ -269,10 +291,10 @@ void parse_file(FILE *file) {
 #define NEXT(N) (tok += N)
 #define PEEK(N) (tok + N)
 
-static void _term(FILE *out);
-static void _expr(FILE *out);
+static type_t _term(FILE *out);
+static type_t _expr(FILE *out);
 static void _stmt(FILE *out);
-static void _binary(FILE *out, int prec);
+static type_t _binary(FILE *out, int prec);
 
 static int _getfun(char *name, int sz) {
     int i;
@@ -294,22 +316,43 @@ static int _getvar(char *name, int sz) {
 
 static int _getvarpos(int idx) {
     int i, sz = 0;
-    for (i = 0; i <= idx; ++i) sz += vars[i].type_sz;
+    for (i = 0; i <= idx; ++i) sz += vars[i].type.sz;
     return sz;
 }
 
-static int _newvar(char *name, int sz, int typ) {
-    vars[nvars].type_sz = typ;
+static int _newvar(char *name, int sz, type_t type) {
+    vars[nvars].type = type;
     vars[nvars].sz = sz;
     vars[nvars].name = name;
     return _getvarpos(nvars++);
+}
+
+static type_t _gettype(char *ptr, int sz) {
+    int i;
+    for (i = 0; i < types_sz; ++i) {
+        if (sz != strlen(types[i].name)) continue;
+        if (!strncmp(types[i].name, ptr, sz))
+            return types[i];
+    }
+    return (type_t) { -1 };
+}
+
+static type_t _checktype(type_t fallback) {
+    type_t type = fallback;
+    if (PEEK(0)->kind == TK_COLON) {
+        if (PEEK(1)->kind != TK_ID) error("expected type");
+        type = _gettype(PEEK(1)->ptr, PEEK(1)->sz);
+        if (type.sz == -1) error("unknown type");
+        NEXT(2);
+    }
+    return type;
 }
 
 static void _funhdr(char *name, int sz, FILE *out) {
     fprintf(out, "%.*s:\n  push %%rbp\n  mov %%rsp,%%rbp\n", sz, name);
     funs[nfuns].sz = sz;
     funs[nfuns].name = name;
-    ++nfuns;
+    /*++nfuns;*/
     nvars = 0;
 }
 
@@ -318,15 +361,45 @@ static void _funftr(FILE *out) {
         funs[nfuns-1].sz, funs[nfuns-1].name);
 }
 
-static void _ident(FILE *out, int lvalue) {
+static type_t _ident(FILE *out, int lvalue) {
     token_t *name = PEEK(0);
-    int idx, sz;
+    int idx, sz, cln = 0;
+    type_t type = _gettype("int", 3), expr_type;
     NEXT(1);
     idx = _getvar(name->ptr, name->sz);
-    switch (PEEK(0)->kind) {
+    /* variable type */
+    if (PEEK(0)->kind == TK_COLON) {
+        if (idx != -1) error("cannot declare variable twice");
+        type = _checktype(_gettype("int", 3));
+        cln = 1;
+    }
+    /* set variable */
+    if (PEEK(0)->kind == TK_EQ) {
+        if (lvalue == LVALUE_REF) error("unexpected '&'");
+        if (idx == -1) {
+            if (lvalue != LVALUE_NONE) error("undefined variable");
+            idx = nvars;
+            sz = _newvar(name->ptr, name->sz, type);
+            fprintf(out, "  sub $%d,%%rsp\n", vars[idx].type.sz);
+        } else {
+            sz = _getvarpos(idx);
+        }
+        NEXT(1);
+        expr_type = _expr(out);
+        if (strcmp(expr_type.name, type.name) != 0) error("assignment of wrong type");
+        if (lvalue == LVALUE_DEREF)
+            fprintf(out, "  push %%rax\n  mov -%d(%%rbp),%%rax\n  pop (%%rax)\n", sz);
+        else fprintf(out, "  mov %%rax,-%d(%%rbp)\n", sz);
+        return type;
+    }
+
+    if (cln) error("unexpected ':'");
     /* call function */
-    case TK_LPAREN: {
+    if (PEEK(0)->kind == TK_LPAREN) {
+        int fun = _getfun(name->ptr, name->sz);
         int arity = 0;
+        /* XXX: also check arity and argument types */
+        type = (fun != -1)? funs[fun].ret : _gettype("int", 3);
         if (PEEK(1)->kind != TK_RPAREN) {
             do {
                 if (arity >= MAX_ARGS) error("more than 6 arguments not supported yet");
@@ -338,44 +411,28 @@ static void _ident(FILE *out, int lvalue) {
         if (PEEK(0)->kind != TK_RPAREN) error("missing ')'");
         NEXT(1);
         fprintf(out, "  call %.*s\n", name->sz, name->ptr);
-    } break;
-    /* set variable */
-    case TK_EQ: {
-        if (lvalue == LVALUE_REF) error("unexpected '&'");
-        /* XXX: proper types/type sizes */
-        if (idx == -1) {
-            if (lvalue != LVALUE_NONE) error("undefined variable");
-            idx = nvars;
-            sz = _newvar(name->ptr, name->sz, 8);
-            fprintf(out, "  sub $%d,%%rsp\n", vars[idx].type_sz);
-        } else {
-            sz = _getvarpos(idx);
-        }
-        NEXT(1);
-        _expr(out);
-        if (lvalue == LVALUE_DEREF)
-            fprintf(out, "  push %%rax\n  mov -%d(%%rbp),%%rax\n  pop (%%rax)\n", sz);
-        else fprintf(out, "  mov %%rax,-%d(%%rbp)\n", sz);
-    } break;
-    /* get variable */
-    default:
-        if (idx == -1) error("undefined variable");
-        if (lvalue == LVALUE_REF)
-            fprintf(out, "  lea -%d(%%rbp),%%rax\n", _getvarpos(idx));
-        else if (lvalue == LVALUE_DEREF)
-            fprintf(out, "  mov -%d(%%rbp),%%rax\n  mov (%%rax),%%rax\n", _getvarpos(idx));
-        else fprintf(out, "  mov -%d(%%rbp),%%rax\n", _getvarpos(idx));
+        return type;
     }
+    /* get variable */
+    if (idx == -1) error("undefined variable");
+    type = (lvalue == LVALUE_REF || lvalue == LVALUE_DEREF)? _gettype("ptr", 3) : vars[idx].type;
+    if (lvalue == LVALUE_REF)
+        fprintf(out, "  lea -%d(%%rbp),%%rax\n", _getvarpos(idx));
+    else if (lvalue == LVALUE_DEREF)
+        fprintf(out, "  mov -%d(%%rbp),%%rax\n  mov (%%rax),%%rax\n", _getvarpos(idx));
+    else fprintf(out, "  mov -%d(%%rbp),%%rax\n", _getvarpos(idx));
+    return type;
 }
 
-static void _number(FILE *out) {
+static type_t _number(FILE *out) {
     int neg = PEEK(0)->kind == TK_SUB;
     if (neg) NEXT(1);
     fprintf(out, "  mov $%s%.*s,%%rax\n", neg?"-":"", PEEK(0)->sz, PEEK(0)->ptr);
     NEXT(1);
+    return _gettype("int", 3);
 }
 
-static void _character(FILE *out) {
+static type_t _character(FILE *out) {
     token_t *chr = PEEK(0);
     int num = chr->ptr[0];
     /* escape character */
@@ -394,30 +451,33 @@ static void _character(FILE *out) {
     }
     fprintf(out, "  mov $%d,%%rax\n", num);
     NEXT(1);
+    return _gettype("char", 4);
 }
 
-static void _string(FILE *out) {
+static type_t _string(FILE *out) {
     strs[nstrs++] = PEEK(0);
     fprintf(out, "  mov $.L__string.%d,%%rax\n", nstrs-1);
     NEXT(1);
+    return _gettype("str", 3);
 }
 
-static void _unary(FILE *out) {
+static type_t _unary(FILE *out) {
+    type_t type;
     switch (PEEK(0)->kind) {
     case TK_NOT:
         NEXT(1);
-        _term(out);
+        type = _term(out);
         fprintf(out, "  not %%rax\n");
         break;
     case TK_BNOT:
         NEXT(1);
-        _term(out);
+        type = _term(out);
         fprintf(out, "  cmp $0,%%rax\n  sete %%al\n  movzx  %%al,%%rax\n");
         break;
     case TK_SUB:
         if (PEEK(1)->kind == TK_INT) return _number(out);
         NEXT(1);
-        _expr(out);
+        type = _expr(out);
         fprintf(out, "  neg %%rax\n");
         break;
     case TK_AND:
@@ -427,14 +487,15 @@ static void _unary(FILE *out) {
     case TK_AT:
         NEXT(1);
         if (PEEK(0)->kind == TK_ID) return _ident(out, LVALUE_DEREF);
-        _expr(out);
+        type = _expr(out);
         fprintf(out, "  mov (%%rax),%%rax\n");
         break;
     default: error("unexpected operator");
     }
+    return type;
 }
 
-static void _term(FILE *out) {
+static type_t _term(FILE *out) {
     switch (PEEK(0)->kind) {
     case TK_NOT: case TK_BNOT: case TK_SUB:
     case TK_AT: case TK_AND: return _unary(out);
@@ -442,12 +503,13 @@ static void _term(FILE *out) {
     case TK_CHR: return _character(out);
     case TK_STR: return _string(out);
     case TK_ID: return _ident(out, LVALUE_NONE);
-    case TK_LPAREN:
+    case TK_LPAREN: {
         NEXT(1);
-        _expr(out);
+        type_t type = _expr(out);
         if (PEEK(0)->kind != TK_RPAREN) error("missing ')'");
         NEXT(1);
-        return;
+        return type;
+    }
     default: error("unexpected token");
     }
 }
@@ -459,33 +521,38 @@ static int _precop(int kind, int prec) {
     return 0;
 }
 
-static void _compare_expr(FILE *out, int op, int prec) {
-    _binary(out, prec+1);
+static type_t _compare_expr(FILE *out, int op, int prec) {
+    type_t type = _binary(out, prec+1);
     if (prec < PREC_COMPARE) error("&& and || are not implemented yet");
     fprintf(out, "  pop %%rdi\n  cmp %%rax,%%rdi\n  %s %%al\n  movzb %%al,%%rax\n", GENCMP[op]);
+    return type;
 }
 
-static void _binary_expr(FILE *out, int op, int prec) {
-    if (prec == MAX_PRECEDENCE) _term(out);
-    else _binary(out, prec+1);
+static type_t _binary_expr(FILE *out, int op, int prec) {
+    type_t type;
+    if (prec == MAX_PRECEDENCE) type = _term(out);
+    else type = _binary(out, prec+1);
     fprintf(out, "%s", GENOPS[op]);
+    return type;
 }
 
-static void _binary(FILE *out, int prec) {
+static type_t _binary(FILE *out, int prec) {
+    type_t type;
     int op;
-    if (prec == MAX_PRECEDENCE) _term(out);
-    else _binary(out, prec+1);
+    if (prec == MAX_PRECEDENCE) type = _term(out);
+    else type = _binary(out, prec+1);
     while (prec < MAX_PRECEDENCE && _precop(PEEK(0)->kind, prec)) {
         if ((op = PEEK(0)->kind) == TK_EOF) break;
         NEXT(1);
         fprintf(out, "  push %%rax\n");
-        if (prec <= PREC_COMPARE) _compare_expr(out, op, prec);
-        else _binary_expr(out, op, prec);
+        if (prec <= PREC_COMPARE) type = _compare_expr(out, op, prec);
+        else type = _binary_expr(out, op, prec);
     }
+    return type;
 }
 
-static void _expr(FILE *out) {
-    _binary(out, 0);
+static type_t _expr(FILE *out) {
+    return _binary(out, 0);
 }
 
 static void _body(FILE *out) {
@@ -504,16 +571,19 @@ static void _body(FILE *out) {
 
 static int _allocate_vars(void) {
     int in = 0, nvars = 0, idx = 0;
-    token_t *cur = tok;
+    token_t *cur = tok, *var;
     if (PEEK(0)->kind != TK_LBRACK) return 0;
     do {
         if (PEEK(0)->kind == TK_LBRACK) ++in;
         if (PEEK(0)->kind == TK_RBRACK) --in;
-        if (PEEK(0)->kind == TK_ID && PEEK(1)->kind == TK_EQ) {
-            /* XXX: types */
-            if (_getvar(PEEK(0)->ptr, PEEK(0)->sz) == -1)
-                idx = _newvar(PEEK(0)->ptr, PEEK(0)->sz, 8);
+        if (PEEK(0)->kind == TK_ID) {
+            var = PEEK(0);
             NEXT(1);
+            if (PEEK(0)->kind == TK_EQ || PEEK(0)->kind == TK_COLON) {
+                type_t type = _checktype(_gettype("int", 3));
+                if (_getvar(PEEK(0)->ptr, PEEK(0)->sz) == -1)
+                    idx = _newvar(PEEK(0)->ptr, PEEK(0)->sz, type);
+            }
         }
         NEXT(1);
     } while (PEEK(0)->kind != TK_EOF && in > 0);
@@ -526,40 +596,51 @@ static void _kwfun(FILE *out) {
     if (name->kind != TK_ID) error("expected function name");
     NEXT(2); /* skip fun + name */
     int i, nvars, arg, idx = _getfun(name->ptr, name->sz);
+    type_t argtype;
+    token_t *argname;
+    if (idx != -1) error("cannot define function twice");
     _funhdr(name->ptr, name->sz, out);
     /* XXX: also preallocate arguments in a single instruction */
     if (PEEK(0)->kind != TK_LPAREN) error("missing '('");
     NEXT(1);
     funs[nfuns].arity = 0;
     if (PEEK(0)->kind == TK_ID) {
-        /* XXX: types/type sizes */
-        arg = _newvar(PEEK(0)->ptr, PEEK(0)->sz, 8);
+        argname = PEEK(0);
         NEXT(1);
-        ++funs[nfuns].arity;
+        argtype = _checktype(_gettype("int", 3));
+        arg = _newvar(argname->ptr, argname->sz, argtype);
+        funs[nfuns].args[funs[nfuns].arity++] = argtype;
         while (PEEK(0)->kind == TK_COMMA) {
             NEXT(1);
             if (PEEK(0)->kind != TK_ID) error("missing ')'");
-            arg = _newvar(PEEK(0)->ptr, PEEK(0)->sz, 8);
+            argname = PEEK(0);
             NEXT(1);
-            if (++funs[nfuns].arity > MAX_ARGS)
+            argtype = _checktype(_gettype("int", 3));
+            arg = _newvar(argname->ptr, argname->sz, argtype);
+            funs[nfuns].args[funs[nfuns].arity++] = argtype;
+            if (funs[nfuns].arity > MAX_ARGS)
                 error("more than 6 arguments not supported yet");
         }
         fprintf(out, "  sub $%d,%%rsp\n", arg);
-        for (i = 0; i < funs[nfuns].arity; ++i)
+        for (i = 0; i < funs[nfuns].arity; ++i) {
             fprintf(out, "  mov %s,-%d(%%rbp)\n", ARGREGS[i], _getvarpos(i));
+        }
     }
     if (PEEK(0)->kind != TK_RPAREN) error("missing ')'");
     NEXT(1);
-    if (idx != -1) error("cannot define function twice");
+    funs[nfuns].ret = _checktype(_gettype("int", 3));
     if (nvars = _allocate_vars()) fprintf(out, "  sub $%d,%%rsp\n", nvars);
+    ++nfuns;
     _body(out);
     _funftr(out);
 }
 
 static void _kwreturn(FILE *out) {
+    fun_t fun = funs[nfuns-1];
     NEXT(1);
-    _expr(out);
-    fprintf(out, "  jmp .L__%.*s.ret\n", funs[nfuns-1].sz, funs[nfuns-1].name);
+    type_t type = _expr(out);
+    if (strcmp(type.name, fun.ret.name) != 0) error("returning wrong type");
+    fprintf(out, "  jmp .L__%.*s.ret\n", fun.sz, fun.name);
 }
 
 static void _kwextern(FILE *out) {
@@ -612,15 +693,15 @@ static void _kwif(FILE *out) {
 
 static void _stmt(FILE *out) {
     switch (PEEK(0)->kind) {
-    case TK_FUN: return _kwfun(out);
-    case TK_RETURN: return _kwreturn(out);
-    case TK_EXTERN: return _kwextern(out);
-    case TK_INLINE: return _kwinline(out);
-    case TK_BREAK: return _kwbreak(out);
-    case TK_WHILE: return _kwwhile(out);
-    case TK_IF: return _kwif(out);
-    case TK_ID: return _ident(out, LVALUE_NONE);
-    case TK_AT: return _unary(out);
+    case TK_FUN: _kwfun(out); break;
+    case TK_RETURN: _kwreturn(out); break;
+    case TK_EXTERN: _kwextern(out); break;
+    case TK_INLINE: _kwinline(out); break;
+    case TK_BREAK: _kwbreak(out); break;
+    case TK_WHILE: _kwwhile(out); break;
+    case TK_IF: _kwif(out); break;
+    case TK_ID: _ident(out, LVALUE_NONE); break;
+    case TK_AT: _unary(out); break;
     default: error("unexpected token");
     }
 }

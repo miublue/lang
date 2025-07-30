@@ -5,7 +5,7 @@ fun main() {
     # XXX: my dumbass didn't add any statement separators (like semicolons or even newlines)
     # so if i used '*' as the deref operator, the compiler would think it's trying to multiply
     # by the previous line's expression, which is why i made it '@', and i fucking hate it.
-    b = &a
+    b: ptr = &a
     @b = 69
     putnum(@b)
     return 0

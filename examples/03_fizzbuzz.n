@@ -2,7 +2,7 @@ extern putstr, putnum
 
 fun fizzbuzz(n) {
     i = 1
-    while i <= n {
+    while (i <= n) {
         if (i % 15 == 0) putstr("FizzBuzz\n")
         else if (i % 3 == 0) putstr("Fizz\n")
         else if (i % 5 == 0) putstr("Buzz\n")
