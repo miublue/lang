@@ -147,10 +147,8 @@ static uint32_t nvars = 0, nfuns = 0, nstrs = 0;
 static uint32_t nlabls = 0, cloop = 0;
 
 /* XXX: small core library, semicolons, arrays, types, '&&', '||' */
-void error(char *msg) {
-    fprintf(stderr, "error: %s\n", msg);
-    exit(1);
-}
+
+#define ERROR(...) { fprintf(stderr, "error: "__VA_ARGS__); exit(1); }
 
 static void _append_token(token_t tok) {
     if (toks_sz >= toks_cap)
@@ -209,7 +207,7 @@ static token_t _next_token(void) {
         }
         ++tok.sz;
         NEXT(1);
-        if (PEEK(1) != '\'') error("unclosed character");
+        if (PEEK(1) != '\'') ERROR("unclosed character\n");
         NEXT(2);
         return tok;
     } else if (PEEK(0) == '\"') {
@@ -221,7 +219,7 @@ static token_t _next_token(void) {
                 ++tok.sz;
                 NEXT(1);
             }
-            if (!BOUND(0)) error("unclosed string");
+            if (!BOUND(0)) ERROR("unclosed string\n");
             ++tok.sz;
             NEXT(1);
         }
@@ -236,7 +234,7 @@ static token_t _next_token(void) {
         } else if (op1 != -1) {
             tok.kind = op1+TK_LBRACK;
             tok.sz = 1;
-        } else error("unknown operator");
+        } else ERROR("unknown operator\n");
         NEXT(tok.sz);
         return tok;
     } else if (isalpha(PEEK(0)) || PEEK(0) == '_') {
@@ -249,7 +247,7 @@ static token_t _next_token(void) {
         if (kwrd != -1) tok.kind = kwrd+TK_IF;
         if (tok.kind == TK_INLINE) {
             _skip_space();
-            if (PEEK(0) != '{') error("missing '{'");
+            if (PEEK(0) != '{') ERROR("missing '{'\n");
             NEXT(1);
             tok.ptr = text+i;
             tok.sz = 0;
@@ -257,13 +255,13 @@ static token_t _next_token(void) {
                 ++tok.sz;
                 NEXT(1);
             }
-            if (!BOUND(0)) error("missing '}'");
+            if (!BOUND(0)) ERROR("missing '}'\n");
             NEXT(1);
             return tok;
         }
         return tok;
     }
-    error("invalid character");
+    ERROR("invalid character '%c'\n", PEEK(0));
 }
 
 #undef PEEK
@@ -275,7 +273,7 @@ void parse_file(FILE *file) {
     text_sz = ftell(file);
     text = malloc(text_sz);
     fseek(file, 0, SEEK_SET);
-    if (!fread(text, sizeof(char), text_sz, file)) error("could not read from file");
+    if (!fread(text, sizeof(char), text_sz, file)) ERROR("could not read from file\n");
     i = 0;
     toks_sz = 0;
     toks = malloc(sizeof(token_t) * (toks_cap = ALLOC_SZ));
@@ -340,9 +338,9 @@ static type_t _gettype(char *ptr, int sz) {
 static type_t _checktype(type_t fallback) {
     type_t type = fallback;
     if (PEEK(0)->kind == TK_COLON) {
-        if (PEEK(1)->kind != TK_ID) error("expected type");
+        if (PEEK(1)->kind != TK_ID) ERROR("expected type\n");
         type = _gettype(PEEK(1)->ptr, PEEK(1)->sz);
-        if (type.sz == -1) error("unknown type");
+        if (type.sz == -1) ERROR("unknown type '%.*s'\n", PEEK(1)->sz, PEEK(1)->ptr);
         NEXT(2);
     }
     return type;
@@ -370,15 +368,15 @@ static type_t _ident(FILE *out, int lvalue) {
     idx = _getvar(name->ptr, name->sz);
     /* variable type */
     if (PEEK(0)->kind == TK_COLON) {
-        if (idx != -1) error("cannot declare variable twice");
+        if (idx != -1) ERROR("cannot redeclare variable '%.*s'\n", name->sz, name->ptr);
         type = _checktype(_gettype("int", 3));
         cln = 1;
     }
     /* set variable */
     if (PEEK(0)->kind == TK_EQ) {
-        if (lvalue == LVALUE_REF) error("unexpected '&'");
+        if (lvalue == LVALUE_REF) ERROR("unexpected '&'\n");
         if (idx == -1) {
-            if (lvalue != LVALUE_NONE) error("undefined variable");
+            if (lvalue != LVALUE_NONE) ERROR("undefined variable '%.*s'\n", name->sz, name->ptr);
             idx = nvars;
             sz = _newvar(name->ptr, name->sz, type);
             fprintf(out, "  sub $%d,%%rsp\n", vars[idx].type.sz);
@@ -387,14 +385,16 @@ static type_t _ident(FILE *out, int lvalue) {
         }
         NEXT(1);
         expr_type = _expr(out);
-        if (strcmp(expr_type.name, type.name) != 0) error("assignment of wrong type");
+        if (strcmp(expr_type.name, type.name) != 0)
+            ERROR("variable '%.*s' expected type '%s', got '%s'\n",
+                name->sz, name->ptr, type.name, expr_type.name);
         if (lvalue == LVALUE_DEREF)
             fprintf(out, "  push %%rax\n  mov -%d(%%rbp),%%rax\n  pop (%%rax)\n", sz);
         else fprintf(out, "  mov %%rax,-%d(%%rbp)\n", sz);
         return type;
     }
 
-    if (cln) error("unexpected ':'");
+    if (cln) ERROR("unexpected ':'\n");
     /* call function */
     if (PEEK(0)->kind == TK_LPAREN) {
         int fidx = _getfun(name->ptr, name->sz);
@@ -406,24 +406,27 @@ static type_t _ident(FILE *out, int lvalue) {
         type = (fidx != -1)? fun.ret : _gettype("int", 3);
         if (PEEK(1)->kind != TK_RPAREN) {
             do {
-                if (arity >= MAX_ARGS) error("more than 6 arguments not supported yet");
+                if (arity >= MAX_ARGS) ERROR("more than %d arguments not supported yet\n", MAX_ARGS);
                 NEXT(1);
                 argtype = _expr(out);
                 if (fidx != -1) {
                     if (strcmp(argtype.name, fun.args[arity].name) != 0)
-                        error("argument type mismatch");
+                        ERROR("function '%.*s' expected type '%s', got '%s'\n",
+                            name->sz, name->ptr, fun.args[arity].name, argtype.name);
                 }
                 fprintf(out, "  mov %%rax,%s\n", ARGREGS[arity++]);
             } while (PEEK(0)->kind == TK_COMMA);
         } else NEXT(1);
-        if (PEEK(0)->kind != TK_RPAREN) error("missing ')'");
+        if (PEEK(0)->kind != TK_RPAREN) ERROR("missing ')'\n");
         NEXT(1);
-        if (fidx != -1 && arity != fun.arity) error("mismatched arguments");
+        if (fidx != -1 && arity != fun.arity)
+            ERROR("function '%.*s' expected %d argument(s), got %d\n",
+                name->sz, name->ptr, fun.arity, arity);
         fprintf(out, "  call %.*s\n", name->sz, name->ptr);
         return type;
     }
     /* get variable */
-    if (idx == -1) error("undefined variable");
+    if (idx == -1) ERROR("undefined variable '%.*s'\n", name->sz, name->ptr);
     type = (lvalue == LVALUE_REF || lvalue == LVALUE_DEREF)? _gettype("ptr", 3) : vars[idx].type;
     if (lvalue == LVALUE_REF)
         fprintf(out, "  lea -%d(%%rbp),%%rax\n", _getvarpos(idx));
@@ -446,7 +449,7 @@ static type_t _character(FILE *out) {
     int num = chr->ptr[0];
     /* escape character */
     if (chr->sz > 1) {
-        if (chr->ptr[0] != '\\') error("invalid character");
+        if (chr->ptr[0] != '\\') ERROR("invalid character\n");
         switch (chr->ptr[1]) {
         case '\\': num = '\\'; break;
         case '\'': num = '\''; break;
@@ -455,7 +458,7 @@ static type_t _character(FILE *out) {
         case 'r': num = '\r'; break;
         case 't': num = '\t'; break;
         case '0': num = 0; break;
-        default: error("invalid escape sequence");
+        default: ERROR("invalid escape sequence '\\%c'\n", chr->ptr[1]);
         }
     }
     fprintf(out, "  mov $%d,%%rax\n", num);
@@ -490,7 +493,7 @@ static type_t _unary(FILE *out) {
         fprintf(out, "  neg %%rax\n");
         break;
     case TK_AND:
-        if (PEEK(1)->kind != TK_ID) error("expected identifier");
+        if (PEEK(1)->kind != TK_ID) ERROR("expected identifier\n");
         NEXT(1);
         return _ident(out, LVALUE_REF);
     case TK_AT:
@@ -499,7 +502,7 @@ static type_t _unary(FILE *out) {
         type = _expr(out);
         fprintf(out, "  mov (%%rax),%%rax\n");
         break;
-    default: error("unexpected operator");
+    default: ERROR("unexpected operator '%.*s'\n", PEEK(0)->sz, PEEK(0)->ptr);
     }
     return type;
 }
@@ -515,11 +518,11 @@ static type_t _term(FILE *out) {
     case TK_LPAREN: {
         NEXT(1);
         type_t type = _expr(out);
-        if (PEEK(0)->kind != TK_RPAREN) error("missing ')'");
+        if (PEEK(0)->kind != TK_RPAREN) ERROR("missing ')'\n");
         NEXT(1);
         return type;
     }
-    default: error("unexpected token");
+    default: ERROR("unexpected token '%.*s'\n", PEEK(0)->sz, PEEK(0)->ptr);
     }
 }
 
@@ -532,7 +535,7 @@ static int _precop(int kind, int prec) {
 
 static type_t _compare_expr(FILE *out, int op, int prec) {
     type_t type = _binary(out, prec+1);
-    if (prec < PREC_COMPARE) error("&& and || are not implemented yet");
+    if (prec < PREC_COMPARE) ERROR("'&&' and '||' are not implemented yet\n");
     fprintf(out, "  pop %%rdi\n  cmp %%rax,%%rdi\n  %s %%al\n  movzb %%al,%%rax\n", GENCMP[op]);
     return type;
 }
@@ -571,7 +574,7 @@ static void _body(FILE *out) {
     } else {
         NEXT(1);
         while (PEEK(0)->kind != TK_RBRACK) {
-            if (PEEK(0)->kind == TK_EOF) error("missing '}'");
+            if (PEEK(0)->kind == TK_EOF) ERROR("missing '}'\n");
             _stmt(out);
         }
         NEXT(1);
@@ -605,14 +608,14 @@ static fun_t _mkfun(FILE *out, int local) {
     type_t argtype;
     int i, idx = _getfun(name->ptr, name->sz);
     fun_t fun;
-    if (name->kind != TK_ID) error("expected function name");
-    if (idx != -1) error("cannot redefine function");
+    if (name->kind != TK_ID) ERROR("expected function name\n");
+    if (idx != -1) ERROR("cannot redefine function '%.*s'\n", name->sz, name->ptr);
     NEXT(2); /* skip fun + name */
     fun.name = name->ptr;
     fun.sz = name->sz;
     fun.arity = 0;
     if (local) _funhdr(fun.name, fun.sz, out);
-    if (PEEK(0)->kind != TK_LPAREN) error("missing '('");
+    if (PEEK(0)->kind != TK_LPAREN) ERROR("missing '('\n");
     NEXT(1);
     if (PEEK(0)->kind == TK_ID) {
         argname = PEEK(0);
@@ -622,17 +625,17 @@ static fun_t _mkfun(FILE *out, int local) {
         fun.args[fun.arity++] = argtype;
         while (PEEK(0)->kind == TK_COMMA) {
             NEXT(1);
-            if (PEEK(0)->kind != TK_ID) error("missing ')'");
+            if (PEEK(0)->kind != TK_ID) ERROR("missing ')'\n");
             argname = PEEK(0);
             NEXT(1);
             argtype = _checktype(_gettype("int", 3));
             if (local) _newvar(argname->ptr, argname->sz, argtype);
             fun.args[fun.arity++] = argtype;
             if (fun.arity > MAX_ARGS)
-                error("more than 6 arguments not supported yet");
+                ERROR("more than %d arguments not supported yet\n", MAX_ARGS);
         }
     }
-    if (PEEK(0)->kind != TK_RPAREN) error("missing ')'");
+    if (PEEK(0)->kind != TK_RPAREN) ERROR("missing ')'\n");
     NEXT(1);
     fun.ret = _checktype(_gettype("int", 3));
     _newfun(fun);
@@ -658,7 +661,9 @@ static void _kwreturn(FILE *out) {
     fun_t fun = funs[nfuns-1];
     NEXT(1);
     type_t type = _expr(out);
-    if (strcmp(type.name, fun.ret.name) != 0) error("returning wrong type");
+    if (strcmp(type.name, fun.ret.name) != 0)
+        ERROR("function '%.*s' returns type '%s', got '%s'\n",
+            fun.sz, fun.name, fun.ret.name, type.name);
     fprintf(out, "  jmp .L__%.*s.ret\n", fun.sz, fun.name);
 }
 
@@ -670,7 +675,7 @@ static void _kwextern(FILE *out) {
             sym = PEEK(1);
             _mkfun(out, 0);
             NEXT(-1); /* womp womp */
-        } else if (sym->kind != TK_ID) error("invalid external symbol");
+        } else if (sym->kind != TK_ID) ERROR("invalid external symbol\n");
         fprintf(out, ".extern %.*s\n", sym->sz, sym->ptr);
         NEXT(1);
     } while (PEEK(0)->kind == TK_COMMA);
@@ -683,7 +688,7 @@ static void _kwinline(FILE *out) {
 
 static void _kwbreak(FILE *out) {
     NEXT(1);
-    if (cloop == 0) error("unexpected break");
+    if (cloop == 0) ERROR("unexpected break\n");
     fprintf(out, "  jmp .L__while.end.%d\n", cloop-1);
 }
 
@@ -726,7 +731,7 @@ static void _stmt(FILE *out) {
     case TK_IF: _kwif(out); break;
     case TK_ID: _ident(out, LVALUE_NONE); break;
     case TK_AT: _unary(out); break;
-    default: error("unexpected token");
+    default: ERROR("unexpected token '%.*s'\n", PEEK(0)->sz, PEEK(0)->ptr);
     }
 }
 
@@ -739,7 +744,7 @@ void gen_file(FILE *out) {
     fprintf(out, "  mov %%rax,%%rdi\n  mov $60,%%rax\n  syscall\n");
     do _stmt(out);
     while (tok->kind != TK_EOF);
-    if (_getfun("main", 4) == -1) error("missing 'main' function");
+    if (_getfun("main", 4) == -1) ERROR("missing 'main' function\n");
     int i;
     fprintf(out, ".data\n");
     for (i = 0; i < nstrs; ++i) {
@@ -751,10 +756,7 @@ void gen_file(FILE *out) {
 
 static FILE *_open(const char *path, const char *mode) {
     FILE *fp = fopen(path, mode);
-    if (!fp) {
-        fprintf(stderr, "error: could not open file '%s'\n", path);
-        exit(1);
-    }
+    if (!fp) ERROR("could not open file '%s'\n", path);
     return fp;
 }
 
