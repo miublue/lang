@@ -1,6 +1,6 @@
-extern putstr
+extern putstr;
 
 fun main() {
-    putstr("Hello, World!\n")
-    return 0
+    putstr("Hello, World!\n");
+    return 0;
 }

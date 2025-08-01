@@ -1,13 +1,13 @@
-extern putnum
+extern putnum;
 # extern fun putnum(n: int)
 
 fun main() {
-    a = 36
+    a = 36;
     # XXX: add semicolons as statement separators
     # XXX: 'ptr' type should keep track of which type it points to
-    b: ptr = &a
-    @b = 69
-    putnum(@b)
-    return 0
+    b: ptr = &a;
+    @b = 69;
+    putnum(@b);
+    return 0;
 }
 

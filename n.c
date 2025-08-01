@@ -19,11 +19,11 @@ enum {
     TK_IF, TK_ELSE, TK_WHILE, TK_BREAK,
     TK_FUN, TK_RETURN, TK_EXTERN, TK_INLINE,
     TK_LBRACK, TK_RBRACK, TK_LPAREN, TK_RPAREN,
-    TK_LSQUARE, TK_RSQUARE, TK_COLON, TK_COMMA,
+    TK_LSQUARE, TK_RSQUARE, TK_SEMI, TK_COLON,
     TK_ADD, TK_SUB, TK_MUL, TK_DIV, TK_MOD,
     TK_BAND, TK_BOR, TK_BNOT, TK_EQ, TK_EQEQ, TK_NEQ,
     TK_LT, TK_GT, TK_LEQ, TK_GEQ, TK_SHL, TK_SHR,
-    TK_AND, TK_OR, TK_AT, TK_NOT, TK_XOR,
+    TK_AND, TK_OR, TK_AT, TK_NOT, TK_XOR, TK_COMMA,
     MAX_TOKENS
 };
 
@@ -50,12 +50,12 @@ static const char *ARGREGS[MAX_ARGS] = {
     "%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9",
 };
 
-static const char *CHAROPS = "{}()[]:,+-*/%&|@!=<>~^";
+static const char *CHAROPS = "{}()[];:+-*/%&|@!=<>~^,";
 static const char *OPERATORS[] = {
-    "{", "}", "(", ")", "[", "]", ":", ",",
-    "+", "-", "*", "/", "%", "&&", "||",
-    "!", "=", "==", "!=", "<", ">", "<=",
-    ">=", "<<", ">>", "&", "|", "@", "~", "^",
+    "{", "}", "(", ")", "[", "]", ";", ":",
+    "+", "-", "*", "/", "%", "&&", "||", "!", "=",
+    "==", "!=", "<", ">", "<=", ">=", "<<", ">>",
+    "&", "|", "@", "~", "^", ",",
 };
 
 static const char *KEYWORDS[] = {
@@ -63,7 +63,6 @@ static const char *KEYWORDS[] = {
     "fun", "return", "extern", "inline",
 };
 
-/* XXX: these structures are literally the same */
 typedef struct {
     uint32_t kind, sz;
     char *ptr;
@@ -146,7 +145,7 @@ static token_t *strs[MAX_STRINGS];
 static uint32_t nvars = 0, nfuns = 0, nstrs = 0;
 static uint32_t nlabls = 0, cloop = 0;
 
-/* XXX: small core library, semicolons, arrays, types, '&&', '||' */
+/* XXX: small core library, arrays, types, '&&', '||' */
 
 #define ERROR(...) { fprintf(stderr, "error: "__VA_ARGS__); exit(1); }
 
@@ -570,7 +569,11 @@ static type_t _expr(FILE *out) {
 static void _body(FILE *out) {
     if (PEEK(0)->kind != TK_LBRACK) {
         if (PEEK(0)->kind >= TK_IF && PEEK(0)->kind <= TK_INLINE) _stmt(out);
-        else _expr(out);
+        else {
+            _expr(out);
+            if (PEEK(0)->kind != TK_SEMI) ERROR("missing ';'\n");
+            NEXT(1);
+        }
     } else {
         NEXT(1);
         while (PEEK(0)->kind != TK_RBRACK) {
@@ -660,10 +663,12 @@ static void _kwfun(FILE *out) {
 static void _kwreturn(FILE *out) {
     fun_t fun = funs[nfuns-1];
     NEXT(1);
+    if (PEEK(0)->kind == TK_SEMI) goto ret;
     type_t type = _expr(out);
     if (strcmp(type.name, fun.ret.name) != 0)
         ERROR("function '%.*s' returns type '%s', got '%s'\n",
             fun.sz, fun.name, fun.ret.name, type.name);
+ret:
     fprintf(out, "  jmp .L__%.*s.ret\n", fun.sz, fun.name);
 }
 
@@ -687,9 +692,9 @@ static void _kwinline(FILE *out) {
 }
 
 static void _kwbreak(FILE *out) {
-    NEXT(1);
     if (cloop == 0) ERROR("unexpected break\n");
     fprintf(out, "  jmp .L__while.end.%d\n", cloop-1);
+    NEXT(1);
 }
 
 static void _kwwhile(FILE *out) {
@@ -722,17 +727,20 @@ static void _kwif(FILE *out) {
 
 static void _stmt(FILE *out) {
     switch (PEEK(0)->kind) {
-    case TK_FUN: _kwfun(out); break;
-    case TK_RETURN: _kwreturn(out); break;
-    case TK_EXTERN: _kwextern(out); break;
-    case TK_INLINE: _kwinline(out); break;
-    case TK_BREAK: _kwbreak(out); break;
-    case TK_WHILE: _kwwhile(out); break;
-    case TK_IF: _kwif(out); break;
-    case TK_ID: _ident(out, LVALUE_NONE); break;
-    case TK_AT: _unary(out); break;
+    case TK_FUN: return _kwfun(out);
+    case TK_WHILE: return _kwwhile(out);
+    case TK_IF: return _kwif(out);
+    case TK_RETURN: _kwreturn(out); goto semi;
+    case TK_EXTERN: _kwextern(out); goto semi;
+    case TK_INLINE: _kwinline(out); goto semi;
+    case TK_BREAK: _kwbreak(out); goto semi;
+    case TK_ID: _ident(out, LVALUE_NONE); goto semi;
+    case TK_AT: _unary(out); goto semi;
     default: ERROR("unexpected token '%.*s'\n", PEEK(0)->sz, PEEK(0)->ptr);
     }
+semi:
+    if (PEEK(0)->kind != TK_SEMI) ERROR("missing ';'\n");
+    NEXT(1);
 }
 
 #undef PEEK

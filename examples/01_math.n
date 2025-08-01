@@ -1,11 +1,11 @@
-extern fun putnum(n: int)
+extern fun putnum(n: int);
 
-fun add(a: int, b: int): int a + b
+fun add(a: int, b: int): int a + b;
 
 fun main() {
-    a: int = 36
-    b: int = a * 2
-    putnum(a = add(b, 3) - 6)
-    return 0
+    a: int = 36;
+    b: int = a * 2;
+    putnum(a = add(b, 3) - 6);
+    return 0;
 }
 

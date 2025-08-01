@@ -4,29 +4,30 @@ extern
     fun alloc(sz: int): ptr,
     fun free(addr: ptr),
     fun strlen(s: str),
-    fun setbyte(addr: ptr, offset: int, byte: char)
+    fun setbyte(addr: ptr, offset: int, byte: char);
 
 fun strcpy(dst: str, src: str) {
-    len = strlen(src)
-    memcpy(dst, src, len)
+    len = strlen(src);
+    memcpy(dst, src, len);
 }
 
 fun main() {
-    a: ptr = alloc(64)
-    strcpy(a, "Hello, World!\n")
-    setbyte(a, 7, 'B')
+    a: ptr = alloc(64);
+    strcpy(a, "Hello, World!\n");
+    setbyte(a, 7, 'B');
 
     inline {
         mov $MY_MESSAGE, %rdi
         call putstr
-    }
+    };
 
-    putstr(a)
-    free(a)
-    return 0
+    putstr(a);
+    free(a);
+    return 0;
 }
 
 inline {
     .data
     MY_MESSAGE: .asciz "BRUH\n"
-}
+};
+
