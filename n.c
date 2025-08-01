@@ -86,12 +86,12 @@ typedef struct {
 } fun_t;
 
 /* 8 byte aligned types */
+static uint32_t types_sz = 3;
 static type_t types[ALLOC_SZ] = {
     (type_t) { 8, 0, "char" },
     (type_t) { 8, 0, "int" },
     (type_t) { 8, 0, "ptr" },
 };
-static uint32_t types_sz = 3; /* AAAAAAAAAAA */
 
 static const char *GENCMP[MAX_TOKENS] = {
     [TK_EQEQ] = "sete",
@@ -143,7 +143,8 @@ static token_t *strs[MAX_STRINGS];
 static uint32_t nvars = 0, nfuns = 0, nstrs = 0;
 static uint32_t nlabls = 0, cloop = 0;
 
-/* XXX: small core library, type alias, arrays, structs, '&&', '||' */
+/* XXX: small core library, type alias, type casting, importing,
+        global variables, constants, arrays, structs, '&&', '||' */
 
 #define ERROR(...) { fprintf(stderr, "error: "__VA_ARGS__); exit(1); }
 
@@ -160,6 +161,11 @@ static void _append_token(token_t tok) {
 static void _skip_space(void) {
     while (BOUND(0) && isspace(PEEK(0))) NEXT(1);
     if (BOUND(0) && PEEK(0) == '#') {
+        if (BOUND(1) && PEEK(1) == '[') {
+            while (BOUND(1) && !(PEEK(0) == ']' && PEEK(1) == '#')) NEXT(1);
+            NEXT(2);
+            return _skip_space();
+        }
         while (BOUND(0) && PEEK(0) != '\n') NEXT(1);
         _skip_space();
     }
@@ -405,6 +411,7 @@ static type_t _ident(FILE *out, int lvalue) {
     if (cln && PEEK(0)->kind != TK_SEMI) ERROR("unexpected ':'\n");
     /* call function */
     if (PEEK(0)->kind == TK_LPAREN) {
+        /* XXX: only call functions that exist */
         int fidx = _getfun(name->ptr, name->sz);
         fun_t fun;
         if (fidx != -1) fun = funs[fidx];
@@ -486,7 +493,7 @@ static type_t _string(FILE *out) {
     NEXT(1);
     type_t type = _typeget("char", 4);
     ++type.nptr;
-    return type; /*_typeget("str", 3);*/
+    return type;
 }
 
 static type_t _unary(FILE *out) {
@@ -803,7 +810,6 @@ int main(int argc, const char **argv) {
     const char *input_path = NULL, *output_path = NULL;
     char output_asm[ALLOC_SZ] = {0};
     int i, output_stdout = 0;
-
     for (i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "-h")) usage(argv[0]);
         else if (!strcmp(argv[i], "-s"))
