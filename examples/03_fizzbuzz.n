@@ -1,4 +1,4 @@
-extern fun putstr(s: str), fun putnum(n: int);
+extern fun putstr(s: ptr), fun putnum(n: int);
 
 fun fizzbuzz(n: int) {
     i: int = 1;

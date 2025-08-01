@@ -69,7 +69,7 @@ typedef struct {
 } token_t;
 
 typedef struct {
-    int sz;
+    int sz, nptr;
     char *name;
 } type_t;
 
@@ -87,13 +87,11 @@ typedef struct {
 
 /* 8 byte aligned types */
 static type_t types[ALLOC_SZ] = {
-    (type_t) { 8, "char" },
-    (type_t) { 8, "int" },
-    (type_t) { 8, "ptr" },
-    (type_t) { 8, "str" },
+    (type_t) { 8, 0, "char" },
+    (type_t) { 8, 0, "int" },
+    (type_t) { 8, 0, "ptr" },
 };
-static uint32_t types_sz = LENGTH(types);
-/* XXX: 'ptr' should keep track of which type it points to */
+static uint32_t types_sz = 3; /* AAAAAAAAAAA */
 
 static const char *GENCMP[MAX_TOKENS] = {
     [TK_EQEQ] = "sete",
@@ -145,7 +143,7 @@ static token_t *strs[MAX_STRINGS];
 static uint32_t nvars = 0, nfuns = 0, nstrs = 0;
 static uint32_t nlabls = 0, cloop = 0;
 
-/* XXX: small core library, arrays, types, '&&', '||' */
+/* XXX: small core library, type alias, arrays, structs, '&&', '||' */
 
 #define ERROR(...) { fprintf(stderr, "error: "__VA_ARGS__); exit(1); }
 
@@ -322,26 +320,43 @@ static int _newvar(char *name, int sz, type_t type) {
     return _getvarpos(nvars++);
 }
 
-static type_t _gettype(char *ptr, int sz) {
-    /* strings are just pointers */
-    if (sz == 3 && !strncmp(ptr, "str", 3)) return _gettype("ptr", 3);
+static int _typecmp(type_t a, type_t b) {
+    /* any pointer is equivalent to a 'ptr' type */
+    if ((a.nptr || b.nptr) && (!strcmp(a.name, "ptr") || !strcmp(b.name, "ptr"))) return 1;
+    return a.sz == b.sz && a.nptr == b.nptr && !strcmp(a.name, b.name);
+}
+
+static char *_typestr(type_t type) {
+    /* convert type to a string for error reporting */
+    char *str = calloc(sizeof(char), ALLOC_SZ);
+    int i;
+    for (i = 0; i < type.nptr; ++i) str[i] = '*';
+    strcat(str, type.name);
+    return str;
+}
+
+static type_t _typeget(char *ptr, int sz) {
     int i;
     for (i = 0; i < types_sz; ++i) {
         if (sz != strlen(types[i].name)) continue;
         if (!strncmp(types[i].name, ptr, sz))
             return types[i];
     }
-    return (type_t) { -1 };
+    ERROR("unknown type '%.*s'\n", sz, ptr);
 }
 
-static type_t _checktype(type_t fallback) {
-    type_t type = fallback;
-    if (PEEK(0)->kind == TK_COLON) {
-        if (PEEK(1)->kind != TK_ID) ERROR("expected type\n");
-        type = _gettype(PEEK(1)->ptr, PEEK(1)->sz);
-        if (type.sz == -1) ERROR("unknown type '%.*s'\n", PEEK(1)->sz, PEEK(1)->ptr);
-        NEXT(2);
+static type_t _typecheck() {
+    type_t type;
+    int nptr = 0;
+    if (PEEK(0)->kind != TK_COLON) ERROR("expected ':'\n");
+    while (PEEK(1)->kind == TK_MUL) {
+        ++nptr;
+        NEXT(1);
     }
+    if (PEEK(1)->kind != TK_ID) ERROR("expected type\n");
+    type = _typeget(PEEK(1)->ptr, PEEK(1)->sz);
+    type.nptr = nptr;
+    NEXT(2);
     return type;
 }
 
@@ -362,38 +377,32 @@ static void _funftr(FILE *out) {
 static type_t _ident(FILE *out, int lvalue) {
     token_t *name = PEEK(0);
     int idx, sz, cln = 0;
-    type_t type = _gettype("int", 3), expr_type;
+    type_t type = _typeget("int", 3), expr_type;
     NEXT(1);
     idx = _getvar(name->ptr, name->sz);
     /* variable type */
     if (PEEK(0)->kind == TK_COLON) {
-        if (idx != -1) ERROR("cannot redeclare variable '%.*s'\n", name->sz, name->ptr);
-        type = _checktype(_gettype("int", 3));
+        if (idx == -1) ERROR("variable '%.*s' not defined, should be a bug in the compiler\n", name->sz, name->ptr);
+        type = _typecheck();
+        sz = _getvarpos(idx);
         cln = 1;
     }
     /* set variable */
     if (PEEK(0)->kind == TK_EQ) {
         if (lvalue == LVALUE_REF) ERROR("unexpected '&'\n");
-        if (idx == -1) {
-            if (lvalue != LVALUE_NONE) ERROR("undefined variable '%.*s'\n", name->sz, name->ptr);
-            idx = nvars;
-            sz = _newvar(name->ptr, name->sz, type);
-            fprintf(out, "  sub $%d,%%rsp\n", vars[idx].type.sz);
-        } else {
-            sz = _getvarpos(idx);
-        }
+        if (idx == -1) ERROR("undeclared variable '%.*s'\n", name->sz, name->ptr);
+        sz = _getvarpos(idx);
         NEXT(1);
         expr_type = _expr(out);
-        if (strcmp(expr_type.name, type.name) != 0)
+        if (!_typecmp(type, expr_type))
             ERROR("variable '%.*s' expected type '%s', got '%s'\n",
-                name->sz, name->ptr, type.name, expr_type.name);
+                name->sz, name->ptr, _typestr(type), _typestr(expr_type));
         if (lvalue == LVALUE_DEREF)
             fprintf(out, "  push %%rax\n  mov -%d(%%rbp),%%rax\n  pop (%%rax)\n", sz);
         else fprintf(out, "  mov %%rax,-%d(%%rbp)\n", sz);
         return type;
     }
-
-    if (cln) ERROR("unexpected ':'\n");
+    if (cln && PEEK(0)->kind != TK_SEMI) ERROR("unexpected ':'\n");
     /* call function */
     if (PEEK(0)->kind == TK_LPAREN) {
         int fidx = _getfun(name->ptr, name->sz);
@@ -401,37 +410,43 @@ static type_t _ident(FILE *out, int lvalue) {
         if (fidx != -1) fun = funs[fidx];
         int arity = 0;
         type_t argtype;
-        /* XXX: also check arity and argument types */
-        type = (fidx != -1)? fun.ret : _gettype("int", 3);
+        type = (fidx != -1)? fun.ret : _typeget("int", 3);
         if (PEEK(1)->kind != TK_RPAREN) {
             do {
                 if (arity >= MAX_ARGS) ERROR("more than %d arguments not supported yet\n", MAX_ARGS);
                 NEXT(1);
                 argtype = _expr(out);
-                if (fidx != -1) {
-                    if (strcmp(argtype.name, fun.args[arity].name) != 0)
-                        ERROR("function '%.*s' expected type '%s', got '%s'\n",
-                            name->sz, name->ptr, fun.args[arity].name, argtype.name);
+                if (fidx != -1 && !_typecmp(fun.args[arity], argtype)) {
+                    ERROR("function '%.*s' expected type '%s', got '%s'\n",
+                        name->sz, name->ptr, _typestr(fun.args[arity]), _typestr(argtype));
                 }
                 fprintf(out, "  mov %%rax,%s\n", ARGREGS[arity++]);
             } while (PEEK(0)->kind == TK_COMMA);
         } else NEXT(1);
         if (PEEK(0)->kind != TK_RPAREN) ERROR("missing ')'\n");
         NEXT(1);
-        if (fidx != -1 && arity != fun.arity)
+        if (fidx != -1 && arity != fun.arity) {
             ERROR("function '%.*s' expected %d argument(s), got %d\n",
                 name->sz, name->ptr, fun.arity, arity);
+        }
         fprintf(out, "  call %.*s\n", name->sz, name->ptr);
         return type;
     }
     /* get variable */
     if (idx == -1) ERROR("undefined variable '%.*s'\n", name->sz, name->ptr);
-    type = (lvalue == LVALUE_REF || lvalue == LVALUE_DEREF)? _gettype("ptr", 3) : vars[idx].type;
-    if (lvalue == LVALUE_REF)
+    type = vars[idx].type;
+    if (lvalue == LVALUE_REF) {
         fprintf(out, "  lea -%d(%%rbp),%%rax\n", _getvarpos(idx));
-    else if (lvalue == LVALUE_DEREF)
+        ++type.nptr;
+    } else if (lvalue == LVALUE_DEREF) {
         fprintf(out, "  mov -%d(%%rbp),%%rax\n  mov (%%rax),%%rax\n", _getvarpos(idx));
-    else fprintf(out, "  mov -%d(%%rbp),%%rax\n", _getvarpos(idx));
+        if (type.nptr == 0)
+            ERROR("cannot dereference variable '%.*s' of type '%s'\n",
+                name->sz, name->ptr, _typestr(type));
+        --type.nptr;
+    } else {
+        fprintf(out, "  mov -%d(%%rbp),%%rax\n", _getvarpos(idx));
+    }
     return type;
 }
 
@@ -440,7 +455,7 @@ static type_t _number(FILE *out) {
     if (neg) NEXT(1);
     fprintf(out, "  mov $%s%.*s,%%rax\n", neg?"-":"", PEEK(0)->sz, PEEK(0)->ptr);
     NEXT(1);
-    return _gettype("int", 3);
+    return _typeget("int", 3);
 }
 
 static type_t _character(FILE *out) {
@@ -462,14 +477,16 @@ static type_t _character(FILE *out) {
     }
     fprintf(out, "  mov $%d,%%rax\n", num);
     NEXT(1);
-    return _gettype("char", 4);
+    return _typeget("char", 4);
 }
 
 static type_t _string(FILE *out) {
     strs[nstrs++] = PEEK(0);
     fprintf(out, "  mov $.L__string.%d,%%rax\n", nstrs-1);
     NEXT(1);
-    return _gettype("str", 3);
+    type_t type = _typeget("char", 4);
+    ++type.nptr;
+    return type; /*_typeget("str", 3);*/
 }
 
 static type_t _unary(FILE *out) {
@@ -587,18 +604,18 @@ static void _body(FILE *out) {
 static int _allocate_vars(void) {
     int in = 0, nvars = 0, idx = 0;
     token_t *cur = tok, *var;
+    type_t type;
     if (PEEK(0)->kind != TK_LBRACK) return 0;
     do {
         if (PEEK(0)->kind == TK_LBRACK) ++in;
         if (PEEK(0)->kind == TK_RBRACK) --in;
-        if (PEEK(0)->kind == TK_ID) {
+        if (PEEK(0)->kind == TK_ID && PEEK(1)->kind == TK_COLON) {
             var = PEEK(0);
             NEXT(1);
-            if (PEEK(0)->kind == TK_EQ || PEEK(0)->kind == TK_COLON) {
-                type_t type = _checktype(_gettype("int", 3));
-                if (_getvar(PEEK(0)->ptr, PEEK(0)->sz) == -1)
-                    idx = _newvar(PEEK(0)->ptr, PEEK(0)->sz, type);
-            }
+            type = _typecheck();
+            if (_getvar(var->ptr, var->sz) != -1)
+                ERROR("cannot redeclare variable '%.*s'\n", var->sz, var->ptr);
+            idx = _newvar(var->ptr, var->sz, type);
         }
         NEXT(1);
     } while (PEEK(0)->kind != TK_EOF && in > 0);
@@ -623,7 +640,7 @@ static fun_t _mkfun(FILE *out, int local) {
     if (PEEK(0)->kind == TK_ID) {
         argname = PEEK(0);
         NEXT(1);
-        argtype = _checktype(_gettype("int", 3));
+        argtype = _typecheck();
         if (local) _newvar(argname->ptr, argname->sz, argtype);
         fun.args[fun.arity++] = argtype;
         while (PEEK(0)->kind == TK_COMMA) {
@@ -631,7 +648,7 @@ static fun_t _mkfun(FILE *out, int local) {
             if (PEEK(0)->kind != TK_ID) ERROR("missing ')'\n");
             argname = PEEK(0);
             NEXT(1);
-            argtype = _checktype(_gettype("int", 3));
+            argtype = _typecheck();
             if (local) _newvar(argname->ptr, argname->sz, argtype);
             fun.args[fun.arity++] = argtype;
             if (fun.arity > MAX_ARGS)
@@ -640,7 +657,8 @@ static fun_t _mkfun(FILE *out, int local) {
     }
     if (PEEK(0)->kind != TK_RPAREN) ERROR("missing ')'\n");
     NEXT(1);
-    fun.ret = _checktype(_gettype("int", 3));
+    /* XXX: no return type/void type */
+    fun.ret = (PEEK(0)->kind == TK_COLON)? _typecheck() : _typeget("int", 3);
     _newfun(fun);
     return fun;
 }
@@ -665,9 +683,9 @@ static void _kwreturn(FILE *out) {
     NEXT(1);
     if (PEEK(0)->kind == TK_SEMI) goto ret;
     type_t type = _expr(out);
-    if (strcmp(type.name, fun.ret.name) != 0)
+    if (!_typecmp(fun.ret, type))
         ERROR("function '%.*s' returns type '%s', got '%s'\n",
-            fun.sz, fun.name, fun.ret.name, type.name);
+            fun.sz, fun.name, _typestr(fun.ret), _typestr(type));
 ret:
     fprintf(out, "  jmp .L__%.*s.ret\n", fun.sz, fun.name);
 }

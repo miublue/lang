@@ -1,18 +1,18 @@
 extern
-    fun putstr(s: str),
+    fun putstr(s: *char),
     fun memcpy(dst: ptr, src: ptr, len: int),
     fun alloc(sz: int): ptr,
     fun free(addr: ptr),
-    fun strlen(s: str),
+    fun strlen(s: *char),
     fun setbyte(addr: ptr, offset: int, byte: char);
 
-fun strcpy(dst: str, src: str) {
-    len = strlen(src);
+fun strcpy(dst: *char, src: *char) {
+    len: int = strlen(src);
     memcpy(dst, src, len);
 }
 
 fun main() {
-    a: ptr = alloc(64);
+    a: *char = alloc(64);
     strcpy(a, "Hello, World!\n");
     setbyte(a, 7, 'B');
 

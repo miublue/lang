@@ -1,11 +1,10 @@
-extern putnum;
-# extern fun putnum(n: int)
+extern fun putnum(n: int);
 
 fun main() {
-    first = 420;
-    a = 36;
+    first: int = 420;
+    a: int = 36;
     # XXX: 'ptr' type should keep track of which type it points to
-    b: ptr = &a;
+    b: *int = &a;
     *b = 69;
     putnum(*(b + 8));
     return 0;

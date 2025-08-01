@@ -1,11 +1,13 @@
 extern fun putnum(n: int);
 
 fun fib(n: int) {
+    # XXX: some way to define multiple variables of same type in one line
     a: int = 0;
     b: int = 1;
+    c: int;
     while (a < n) {
         putnum(a);
-        c: int = a + b;
+        c = a + b;
         a = b;
         b = c;
     }
