@@ -23,7 +23,7 @@ enum {
     TK_ADD, TK_SUB, TK_MUL, TK_DIV, TK_MOD,
     TK_BAND, TK_BOR, TK_BNOT, TK_EQ, TK_EQEQ, TK_NEQ,
     TK_LT, TK_GT, TK_LEQ, TK_GEQ, TK_SHL, TK_SHR,
-    TK_AND, TK_OR, TK_AT, TK_NOT, TK_XOR, TK_COMMA,
+    TK_AND, TK_OR, TK_NOT, TK_XOR, TK_COMMA,
     MAX_TOKENS
 };
 
@@ -50,12 +50,12 @@ static const char *ARGREGS[MAX_ARGS] = {
     "%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9",
 };
 
-static const char *CHAROPS = "{}()[];:+-*/%&|@!=<>~^,";
+static const char *CHAROPS = "{}()[];:+-*/%&|!=<>~^,";
 static const char *OPERATORS[] = {
     "{", "}", "(", ")", "[", "]", ";", ":",
     "+", "-", "*", "/", "%", "&&", "||", "!", "=",
     "==", "!=", "<", ">", "<=", ">=", "<<", ">>",
-    "&", "|", "@", "~", "^", ",",
+    "&", "|", "~", "^", ",",
 };
 
 static const char *KEYWORDS[] = {
@@ -495,7 +495,7 @@ static type_t _unary(FILE *out) {
         if (PEEK(1)->kind != TK_ID) ERROR("expected identifier\n");
         NEXT(1);
         return _ident(out, LVALUE_REF);
-    case TK_AT:
+    case TK_MUL:
         NEXT(1);
         if (PEEK(0)->kind == TK_ID) return _ident(out, LVALUE_DEREF);
         type = _expr(out);
@@ -509,7 +509,7 @@ static type_t _unary(FILE *out) {
 static type_t _term(FILE *out) {
     switch (PEEK(0)->kind) {
     case TK_NOT: case TK_BNOT: case TK_SUB:
-    case TK_AT: case TK_AND: return _unary(out);
+    case TK_MUL: case TK_AND: return _unary(out);
     case TK_INT: return _number(out);
     case TK_CHR: return _character(out);
     case TK_STR: return _string(out);
@@ -735,7 +735,7 @@ static void _stmt(FILE *out) {
     case TK_INLINE: _kwinline(out); goto semi;
     case TK_BREAK: _kwbreak(out); goto semi;
     case TK_ID: _ident(out, LVALUE_NONE); goto semi;
-    case TK_AT: _unary(out); goto semi;
+    case TK_MUL: _unary(out); goto semi;
     default: ERROR("unexpected token '%.*s'\n", PEEK(0)->sz, PEEK(0)->ptr);
     }
 semi:
