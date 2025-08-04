@@ -1,7 +1,7 @@
 extern fun putstr(s: *char);
-# XXX: a way to alias str to *char
 
 fun main(): int {
     putstr("Hello, World!\n");
     return 0;
 }
+

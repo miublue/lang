@@ -7,8 +7,7 @@ extern
     fun setbyte(addr: ptr, offset: int, byte: char);
 
 fun strcpy(dst: *char, src: *char) {
-    len: int = strlen(src);
-    memcpy(dst, src, len);
+    memcpy(dst, src, strlen(src));
 }
 
 fun main() {

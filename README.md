@@ -1,5 +1,5 @@
 # nlang
-Toy compiler for a tiny language that i made for fun. It is not a serious project.  
+Tiny compiler for a toy language that i made for fun. It is not a serious project.  
 I didn't feel like thinking up a name so i picked a random letter (like all good languages do).  
 (Only targets x86_64 linux btw).
 
@@ -12,9 +12,11 @@ make install
 ## Example
 Hello world:
 ```n
-fun main() {
-    extern putstr
-    putstr("Hello, World!\n")
+extern fun putstr(s: *char);
+
+fun main(): int {
+    putstr("Hello, World!\n");
+    return 0;
 }
 ```
 

@@ -16,7 +16,7 @@ enum { LVALUE_NONE, LVALUE_REF, LVALUE_DEREF };
 
 enum {
     TK_EOF, TK_ID, TK_INT, TK_STR, TK_CHR,
-    TK_IF, TK_ELSE, TK_WHILE, TK_BREAK,
+    TK_NULL, TK_IF, TK_ELSE, TK_WHILE, TK_BREAK,
     TK_FUN, TK_RETURN, TK_EXTERN, TK_INLINE,
     TK_LBRACK, TK_RBRACK, TK_LPAREN, TK_RPAREN,
     TK_LSQUARE, TK_RSQUARE, TK_SEMI, TK_COLON,
@@ -59,7 +59,7 @@ static const char *OPERATORS[] = {
 };
 
 static const char *KEYWORDS[] = {
-    "if", "else", "while", "break",
+    "null", "if", "else", "while", "break",
     "fun", "return", "extern", "inline",
 };
 
@@ -136,7 +136,6 @@ static const char *GENOPS[MAX_TOKENS] = {
 static uint32_t toks_sz, toks_cap, text_sz, i;
 static token_t *toks, *tok;
 static char *text;
-
 static var_t vars[MAX_VARS];
 static fun_t funs[MAX_FUNS];
 static token_t *strs[MAX_STRINGS];
@@ -144,8 +143,8 @@ static uint32_t nvars = 0, nfuns = 0, nstrs = 0;
 static uint32_t nlabls = 0, cloop = 0;
 
 /* XXX: small core library, type alias, type casting, importing,
-        global variables, constants, arrays, structs, '&&', '||' */
-
+        global variables, constants, arrays, structs, '&&', '||',
+        properly handle types of different sizes */
 #define ERROR(...) { fprintf(stderr, "error: "__VA_ARGS__); exit(1); }
 
 static void _append_token(token_t tok) {
@@ -247,7 +246,7 @@ static token_t _next_token(void) {
             NEXT(1);
         }
         int kwrd = _is_keyword(tok.ptr, tok.sz);
-        if (kwrd != -1) tok.kind = kwrd+TK_IF;
+        if (kwrd != -1) tok.kind = kwrd+TK_NULL;
         if (tok.kind == TK_INLINE) {
             _skip_space();
             if (PEEK(0) != '{') ERROR("missing '{'\n");
@@ -326,6 +325,7 @@ static int _newvar(char *name, int sz, type_t type) {
     return _getvarpos(nvars++);
 }
 
+/* XXX: 0 should be a valid pointer, also void pointers instead of a 'ptr' type */
 static int _typecmp(type_t a, type_t b) {
     /* any pointer is equivalent to a 'ptr' type */
     if ((a.nptr || b.nptr) && (!strcmp(a.name, "ptr") || !strcmp(b.name, "ptr"))) return 1;
@@ -388,7 +388,7 @@ static type_t _ident(FILE *out, int lvalue) {
     idx = _getvar(name->ptr, name->sz);
     /* variable type */
     if (PEEK(0)->kind == TK_COLON) {
-        if (idx == -1) ERROR("variable '%.*s' not defined, should be a bug in the compiler\n", name->sz, name->ptr);
+        if (idx == -1) ERROR("variable '%.*s' not defined, must be a bug in the compiler\n", name->sz, name->ptr);
         type = _typecheck();
         sz = _getvarpos(idx);
         cln = 1;
@@ -427,7 +427,8 @@ static type_t _ident(FILE *out, int lvalue) {
                     ERROR("function '%.*s' expected type '%s', got '%s'\n",
                         name->sz, name->ptr, _typestr(fun.args[arity]), _typestr(argtype));
                 }
-                fprintf(out, "  mov %%rax,%s\n", ARGREGS[arity++]);
+                fprintf(out, "  push %%rax\n");
+                ++arity;
             } while (PEEK(0)->kind == TK_COMMA);
         } else NEXT(1);
         if (PEEK(0)->kind != TK_RPAREN) ERROR("missing ')'\n");
@@ -436,6 +437,7 @@ static type_t _ident(FILE *out, int lvalue) {
             ERROR("function '%.*s' expected %d argument(s), got %d\n",
                 name->sz, name->ptr, fun.arity, arity);
         }
+        for (; arity > 0; --arity) fprintf(out, "  pop %s\n", ARGREGS[arity-1]);
         fprintf(out, "  call %.*s\n", name->sz, name->ptr);
         return type;
     }
@@ -496,6 +498,12 @@ static type_t _string(FILE *out) {
     return type;
 }
 
+static type_t _null(FILE *out) {
+    fprintf(out, "  mov $0,%%rax\n");
+    NEXT(1);
+    return _typeget("ptr", 3);
+}
+
 static type_t _unary(FILE *out) {
     type_t type;
     switch (PEEK(0)->kind) {
@@ -507,7 +515,7 @@ static type_t _unary(FILE *out) {
     case TK_BNOT:
         NEXT(1);
         type = _term(out);
-        fprintf(out, "  cmp $0,%%rax\n  sete %%al\n  movzx  %%al,%%rax\n");
+        fprintf(out, "  cmp $0,%%rax\n  sete %%al\n  movzx %%al,%%rax\n");
         break;
     case TK_SUB:
         if (PEEK(1)->kind == TK_INT) return _number(out);
@@ -516,13 +524,18 @@ static type_t _unary(FILE *out) {
         fprintf(out, "  neg %%rax\n");
         break;
     case TK_AND:
-        if (PEEK(1)->kind != TK_ID) ERROR("expected identifier\n");
         NEXT(1);
-        return _ident(out, LVALUE_REF);
+        if (PEEK(0)->kind == TK_ID) return _ident(out, LVALUE_REF);
+        type = _expr(out);
+        ++type.nptr;
+        fprintf(out, "  lea (%%rax),%%rax\n");
+        break;
     case TK_MUL:
         NEXT(1);
         if (PEEK(0)->kind == TK_ID) return _ident(out, LVALUE_DEREF);
         type = _expr(out);
+        if (type.nptr == 0) ERROR("cannot dereference type '%s'\n", _typestr(type));
+        --type.nptr;
         fprintf(out, "  mov (%%rax),%%rax\n");
         break;
     default: ERROR("unexpected operator '%.*s'\n", PEEK(0)->sz, PEEK(0)->ptr);
@@ -537,6 +550,7 @@ static type_t _term(FILE *out) {
     case TK_INT: return _number(out);
     case TK_CHR: return _character(out);
     case TK_STR: return _string(out);
+    case TK_NULL: return _null(out);
     case TK_ID: return _ident(out, LVALUE_NONE);
     case TK_LPAREN: {
         NEXT(1);
@@ -572,18 +586,20 @@ static type_t _binary_expr(FILE *out, int op, int prec) {
 }
 
 static type_t _binary(FILE *out, int prec) {
-    type_t type;
+    type_t ltype, rtype = _typeget("int", 3);
     int op;
-    if (prec == MAX_PRECEDENCE) type = _term(out);
-    else type = _binary(out, prec+1);
+    if (prec == MAX_PRECEDENCE) ltype = _term(out);
+    else ltype = _binary(out, prec+1);
     while (prec < MAX_PRECEDENCE && _precop(PEEK(0)->kind, prec)) {
         if ((op = PEEK(0)->kind) == TK_EOF) break;
         NEXT(1);
         fprintf(out, "  push %%rax\n");
-        if (prec <= PREC_COMPARE) type = _compare_expr(out, op, prec);
-        else type = _binary_expr(out, op, prec);
+        if (prec <= PREC_COMPARE) rtype = _compare_expr(out, op, prec);
+        else rtype = _binary_expr(out, op, prec);
+        if (_typecmp(rtype, _typeget("ptr", 3))) ltype = rtype;
     }
-    return type;
+    /*return _typecmp(rtype, _typeget("ptr", 3))? rtype : ltype;*/
+    return ltype;
 }
 
 static type_t _expr(FILE *out) {
@@ -793,15 +809,15 @@ static FILE *_open(const char *path, const char *mode) {
     return fp;
 }
 
-static void _runasm(const char *path, const char *out) {
+static void _runasm(const char *path, const char *out, int no_nlib) {
     char cmd[ALLOC_SZ] = {0};
-    sprintf(cmd, "as %s nlib.s -o %s.o && ld %s.o -o %s && rm %s %s.o",
-        path, path, path, out, path, path);
+    sprintf(cmd, "as %s %s -o %s.o && ld %s.o -o %s && rm %s %s.o",
+        path, no_nlib? "" : "nlib.s", path, path, out, path, path);
     if (system(cmd)) exit(1);
 }
 
 void usage(const char *prog) {
-    printf("usage: %s [-h|-s|-o output] <input>\n", prog);
+    printf("usage: %s [-h|-n|-s|-o output] <input>\n", prog);
     exit(0);
 }
 
@@ -809,11 +825,13 @@ int main(int argc, const char **argv) {
     FILE *input_file = NULL, *output_file = NULL;
     const char *input_path = NULL, *output_path = NULL;
     char output_asm[ALLOC_SZ] = {0};
-    int i, output_stdout = 0;
+    int i, output_stdout = 0, no_nlib = 0;
     for (i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "-h")) usage(argv[0]);
         else if (!strcmp(argv[i], "-s"))
             output_stdout = 1;
+        else if (!strcmp(argv[i], "-n"))
+            no_nlib = 1;
         else if (!strcmp(argv[i], "-o"))
             output_path = argv[++i];
         else input_path = argv[i];
@@ -828,7 +846,7 @@ int main(int argc, const char **argv) {
     fclose(output_file);
     free(toks);
     free(text);
-    if (!output_stdout) _runasm(output_asm, (output_path)? output_path : "a.out");
+    if (!output_stdout) _runasm(output_asm, (output_path)? output_path : "a.out", no_nlib);
     return 0;
 }
 

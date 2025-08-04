@@ -13,3 +13,4 @@ fun main() {
     putstr(b);
     # putnum(b); # this should fail
 }
+
