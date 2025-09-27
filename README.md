@@ -13,8 +13,8 @@ make install
 Hello world:
 ```n
 fun main() {
-    extern putstr
-    putstr("Hello, World!\n")
+    extern putstr;
+    putstr("Hello, World!\n");
 }
 ```
 
