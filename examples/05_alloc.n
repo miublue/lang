@@ -1,26 +1,13 @@
-extern putstr, memcpy, alloc, free, strlen
+extern putstr, memcpy, alloc, free, strlen;
 
-fun strcpy(dst, src) {
-    len = strlen(src)
-    memcpy(dst, src, len)
-}
+fun strcpy(dst, src) memcpy(dst, src, strlen(src));
 
 fun main() {
-    a = alloc(64)
-    strcpy(a, "Hello, World!\n")
-    setbyte(a, 7, 'B')
-
-    inline {
-        mov $MY_MESSAGE, %rdi
-        call putstr
-    }
-
-    putstr(a)
-    free(a)
-    return 0
+    a = alloc(64);
+    strcpy(a, "Hello, World!\n");
+    setbyte(a, 7, 'B');
+    putstr(a);
+    free(a);
+    return 0;
 }
 
-inline {
-    .data
-    MY_MESSAGE: .asciz "BRUH\n"
-}

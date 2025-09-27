@@ -1,18 +1,18 @@
-extern putnum
+extern putnum;
 
 fun fib(n) {
-    a = 0
-    b = 1
+    a = 0;
+    b = 1;
     while (a < n) {
-        putnum(a)
-        c = a + b
-        a = b
-        b = c
+        putnum(a);
+        c = a + b;
+        a = b;
+        b = c;
     }
 }
 
 fun main() {
-    fib(255)
-    return 0
+    fib(255);
+    return 0;
 }
 
