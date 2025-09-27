@@ -3,7 +3,7 @@ extern putstr, memcpy, alloc, free, strlen;
 fun strcpy(dst, src) memcpy(dst, src, strlen(src));
 
 fun main() {
-    a = alloc(64);
+    var a = alloc(64);
     strcpy(a, "Hello, World!\n");
     setbyte(a, 7, 'B');
     putstr(a);

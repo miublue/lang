@@ -3,8 +3,7 @@ extern putnum;
 fun add(a, b) a + b;
 
 fun main() {
-    a = 36;
-    b = a * 2;
+    var a = 36, b = a * 2;
     putnum(a = add(b, 3) - 6);
     return 0;
 }
