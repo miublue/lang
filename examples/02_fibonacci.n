@@ -1,13 +1,13 @@
 extern putnum;
 
 fun fib(n) {
-    var a = 0, b = 1, c;
-    while (a < n) {
-        putnum(a);
-        c = a + b;
-        a = b;
-        b = c;
-    }
+  var a = 0, b = 1;
+  while (a < n) {
+    putnum(a);
+    var c = a + b;
+    a = b;
+    b = c;
+  }
 }
 
 fun main() {

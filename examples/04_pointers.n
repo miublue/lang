@@ -1,10 +1,10 @@
 extern putnum;
 
 fun main() {
-    var a = 36;
-    var b = &a;
-    *b = 69;
-    putnum(*b);
-    return 0;
+  var a = 36;
+  var b = &a;
+  *b = 69;
+  putnum(*b);
+  return 0;
 }
 
