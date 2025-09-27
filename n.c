@@ -461,20 +461,19 @@ static void _body(FILE *out) {
   }
 }
 
-static void _kwvar(FILE *out, int skip) {
-  if (skip) {
-    do NEXT(1); while (PEEK(0)->kind != TK_SEMI);
-    return;
-  }
-  int sz;
+/* XXX: don't generate assignment code if called from _allocate_vars */
+static void _kwvar(FILE *out) {
+  int idx, sz;
   do {
     NEXT(1);
     if (PEEK(0)->kind != TK_ID) ERROR("expected variable name\n");
-    if (_getvar(PEEK(0)->ptr, PEEK(0)->sz) != -1)
-      ERROR("cannot redefine variable '%.*s'\n", PEEK(0)->sz, PEEK(0)->ptr);
     /* XXX: actual types */
-    sz = _newvar(PEEK(0)->ptr, PEEK(0)->sz, 8);
-    EMIT("sub $%d,%%rsp\n", 8);
+    if ((idx = _getvar(PEEK(0)->ptr, PEEK(0)->sz)) != -1) {
+      sz = _getvarpos(idx);
+    } else {
+      sz = _newvar(PEEK(0)->ptr, PEEK(0)->sz, 8);
+      EMIT("sub $%d,%%rsp\n", 8);
+    }
     NEXT(1);
     if (PEEK(0)->kind == TK_EQ) {
       NEXT(1);
@@ -492,7 +491,7 @@ static void _allocate_vars(FILE *out) {
     if (PEEK(0)->kind == TK_LBRACK) ++in;
     if (PEEK(0)->kind == TK_RBRACK) --in;
     if (PEEK(0)->kind == TK_VAR) {
-      _kwvar(out, 0);
+      _kwvar(out);
       if (PEEK(0)->kind != TK_SEMI) ERROR("missing ';'\n");
     }
     NEXT(1);
@@ -574,7 +573,7 @@ static void _kwif(FILE *out) {
   _expr(out);
   EMIT("testq %%rax,%%rax\njz .L__if.end.%d\n", cur);
   _body(out);
-  EMIT("jmp .L__ifelse.end.%d\nL__if.end.%d:\n", cur, cur);
+  EMIT("jmp .L__ifelse.end.%d\n.L__if.end.%d:\n", cur, cur);
   if (PEEK(0)->kind == TK_ELSE) {
     NEXT(1);
     _body(out);
@@ -587,7 +586,7 @@ static void _stmt(FILE *out) {
   case TK_FUN:    return _kwfun(out);
   case TK_IF:     return _kwif(out);
   case TK_WHILE:  return _kwwhile(out);
-  case TK_VAR:    _kwvar(out, 1); break;
+  case TK_VAR:    _kwvar(out); break;
   case TK_RETURN: _kwreturn(out); break;
   case TK_EXTERN: _kwextern(out); break;
   case TK_BREAK:  _kwbreak(out); break;
