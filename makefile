@@ -1,18 +1,17 @@
 CC = cc
-CFLAGS = -O2 -ansi -std=c89 -Wno-builtin-declaration-mismatch
+CFLAGS = -O2 -std=c89 -Wno-builtin-declaration-mismatch
+BINDIR = /usr/local/bin
 OUT = n
 
-all: ${OUT}
-
-.PHONY: ${OUT}
-${OUT}:
+all:
 	${CC} -o ${OUT} n.c ${CFLAGS}
 
-.PHONY: install
 install: ${OUT}
-	install ${OUT} /usr/local/bin
+	strip -s ${OUT}
+	mkdir -p ${BINDIR}
+	install ${OUT} ${BINDIR}
 
-.PHONY: uninstall
 uninstall:
-	rm /usr/local/bin/${OUT}
+	rm ${BINDIR}/${OUT}
 
+.PHONY: all install uninstall
