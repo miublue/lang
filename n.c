@@ -12,6 +12,7 @@
 #define MAX_VARS 256
 #define MAX_ARGS 6
 
+/* XXX: i probably wouldn't need this enum if my compiler were any good */
 enum { LVALUE_NONE, LVALUE_REF, LVALUE_DEREF };
 
 enum {
@@ -27,12 +28,8 @@ enum {
 };
 
 enum {
-  PREC_BANDOR,
-  PREC_COMPARE,
-  PREC_ADDSUB,
-  PREC_MULDIV,
-  PREC_ANDOR,
-  PREC_SHLSHR,
+  PREC_BANDOR, PREC_COMPARE, PREC_ADDSUB,
+  PREC_MULDIV, PREC_ANDOR, PREC_SHLSHR,
   MAX_PRECEDENCE
 };
 
@@ -505,12 +502,11 @@ static void _kwfun(FILE *out) {
   NEXT(2); /* skip fun + name */
   int i, arg, idx = _getfun(name->ptr, name->sz);
   _funhdr(name->ptr, name->sz, out);
-  /* XXX: also preallocate arguments in a single instruction */
   if (PEEK(0)->kind != TK_LPAREN) ERROR("missing '(' for function '%.*s'\n", name->sz, name->ptr);
   NEXT(1);
   funs[nfuns].arity = 0;
   if (PEEK(0)->kind == TK_ID) {
-    /* XXX: types/type sizes */
+    /* XXX: argument types */
     arg = _newvar(PEEK(0)->ptr, PEEK(0)->sz, 8);
     NEXT(1);
     ++funs[nfuns].arity;
