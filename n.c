@@ -87,34 +87,16 @@ static const char *GENCMP[MAX_TOKENS] = {
 };
 
 static const char *GENOPS[MAX_TOKENS] = {
-  [TK_SHL] =  "  mov %rax,%rcx\n"
-              "  pop %rax\n"
-              "  shl %cl,%rax\n",
-  [TK_SHR] =  "  mov %rax,%rcx\n"
-              "  pop %rax\n",
-              "  sar %cl,%rax\n",
-  [TK_AND] =  "  pop %rdi\n"
-              "  and %rdi,%rax\n",
-  [TK_XOR] =  "  pop %rdi\n"
-              "  xor %rdi,%rax\n",
-  [TK_OR]  =  "  pop %rdi\n"
-              "  or %rdi,%rax\n",
-  [TK_ADD] =  "  pop %rdi\n"
-              "  add %rdi,%rax\n",
-  [TK_SUB] =  "  mov %rax,%rdi\n"
-              "  pop %rax\n"
-              "  sub %rdi,%rax\n",
-  [TK_MUL] =  "  pop %rdi\n"
-              "  imul %rdi,%rax\n",
-  [TK_DIV] =  "  mov %rax,%rdi\n"
-              "  pop %rax\n"
-              "  cqo\n"
-              "  idiv %rdi\n",
-  [TK_MOD] =  "  mov %rax,%rdi\n"
-              "  pop %rax\n"
-              "  cqo\n"
-              "  idiv %rdi\n"
-              "  mov %rdx,%rax\n",
+  [TK_SHL] =  "mov %rax,%rcx\npop %rax\nshl %cl,%rax\n",
+  [TK_SHR] =  "mov %rax,%rcx\npop %rax\nsar %cl,%rax\n",
+  [TK_AND] =  "pop %rdi\nand %rdi,%rax\n",
+  [TK_XOR] =  "pop %rdi\nxor %rdi,%rax\n",
+  [TK_OR]  =  "pop %rdi\nor %rdi,%rax\n",
+  [TK_ADD] =  "pop %rdi\nadd %rdi,%rax\n",
+  [TK_SUB] =  "mov %rax,%rdi\npop %rax\nsub %rdi,%rax\n",
+  [TK_MUL] =  "pop %rdi\nimul %rdi,%rax\n",
+  [TK_DIV] =  "mov %rax,%rdi\npop %rax\ncqo\nidiv %rdi\n",
+  [TK_MOD] =  "mov %rax,%rdi\npop %rax\ncqo\nidiv %rdi\nmov %rdx,%rax\n",
 };
 
 static uint32_t toks_sz, toks_cap, text_sz, i;
@@ -286,7 +268,7 @@ static int _newvar(char *name, int sz, int typ) {
 }
 
 static void _funhdr(char *name, int sz, FILE *out) {
-  EMIT(".globl %.*s\n%.*s:\n  push %%rbp\n  mov %%rsp,%%rbp\n", sz, name, sz, name);
+  EMIT(".globl %.*s\n%.*s:\npush %%rbp\nmov %%rsp,%%rbp\n", sz, name, sz, name);
   funs[nfuns].sz = sz;
   funs[nfuns].name = name;
   ++nfuns;
@@ -294,8 +276,7 @@ static void _funhdr(char *name, int sz, FILE *out) {
 }
 
 static void _funftr(FILE *out) {
-  EMIT(".L__%.*s.ret:\n  leave\n  ret\n",
-      funs[nfuns-1].sz, funs[nfuns-1].name);
+  EMIT(".L__%.*s.ret:\nleave\nret\n", funs[nfuns-1].sz, funs[nfuns-1].name);
 }
 
 static void _ident(FILE *out, int lvalue) {
@@ -310,15 +291,15 @@ static void _ident(FILE *out, int lvalue) {
       do {
         NEXT(1);
         _expr(out);
-        EMIT("  push %%rax\n");
+        EMIT("push %%rax\n");
         if (++arity >= MAX_ARGS) ERROR("more than 6 arguments not supported yet\n");
       } while (PEEK(0)->kind == TK_COMMA);
     } else NEXT(1);
     if (PEEK(0)->kind != TK_RPAREN)
       ERROR("missing ')' for function '%.*s'\n", name->sz, name->ptr);
     NEXT(1);
-    for (; arity > 0; --arity) EMIT("  pop %s\n", ARGREGS[arity-1]);
-    EMIT("  call %.*s\n", name->sz, name->ptr);
+    for (; arity > 0; --arity) EMIT("pop %s\n", ARGREGS[arity-1]);
+    EMIT("call %.*s\n", name->sz, name->ptr);
   } break;
   /* set variable */
   case TK_EQ: {
@@ -329,24 +310,24 @@ static void _ident(FILE *out, int lvalue) {
     NEXT(1);
     _expr(out);
     if (lvalue == LVALUE_DEREF)
-      EMIT("  push %%rax\n  mov -%d(%%rbp),%%rax\n  pop (%%rax)\n", sz);
-    else EMIT("  mov %%rax,-%d(%%rbp)\n", sz);
+      EMIT("push %%rax\nmov -%d(%%rbp),%%rax\npop (%%rax)\n", sz);
+    else EMIT("mov %%rax,-%d(%%rbp)\n", sz);
   } break;
   /* get variable */
   default:
     if (idx == -1) ERROR("undefined variable '%.*s'\n", name->sz, name->ptr);
     if (lvalue == LVALUE_REF)
-      EMIT("  lea -%d(%%rbp),%%rax\n", _getvarpos(idx));
+      EMIT("lea -%d(%%rbp),%%rax\n", _getvarpos(idx));
     else if (lvalue == LVALUE_DEREF)
-      EMIT("  mov -%d(%%rbp),%%rax\n  mov (%%rax),%%rax\n", _getvarpos(idx));
-    else EMIT("  mov -%d(%%rbp),%%rax\n", _getvarpos(idx));
+      EMIT("mov -%d(%%rbp),%%rax\nmov (%%rax),%%rax\n", _getvarpos(idx));
+    else EMIT("mov -%d(%%rbp),%%rax\n", _getvarpos(idx));
   }
 }
 
 static void _number(FILE *out) {
   int neg = PEEK(0)->kind == TK_SUB;
   if (neg) NEXT(1);
-  EMIT("  mov $%s%.*s,%%rax\n", neg?"-":"", PEEK(0)->sz, PEEK(0)->ptr);
+  EMIT("mov $%s%.*s,%%rax\n", neg?"-":"", PEEK(0)->sz, PEEK(0)->ptr);
   NEXT(1);
 }
 
@@ -367,13 +348,13 @@ static void _character(FILE *out) {
     default: ERROR("invalid escape sequence '\\%c'\n", chr->ptr[1]);
     }
   }
-  EMIT("  mov $%d,%%rax\n", num);
+  EMIT("mov $%d,%%rax\n", num);
   NEXT(1);
 }
 
 static void _string(FILE *out) {
   strs[nstrs++] = PEEK(0);
-  EMIT("  mov $.L__string.%d,%%rax\n", nstrs-1);
+  EMIT("mov $.L__string.%d,%%rax\n", nstrs-1);
   NEXT(1);
 }
 
@@ -382,18 +363,18 @@ static void _unary(FILE *out) {
   case TK_NOT:
     NEXT(1);
     _term(out);
-    EMIT("  not %%rax\n");
+    EMIT("not %%rax\n");
     break;
   case TK_BNOT:
     NEXT(1);
     _term(out);
-    EMIT("  cmp $0,%%rax\n  sete %%al\n  movzx  %%al,%%rax\n");
+    EMIT("cmp $0,%%rax\nsete %%al\nmovzx %%al,%%rax\n");
     break;
   case TK_SUB:
     if (PEEK(1)->kind == TK_INT) return _number(out);
     NEXT(1);
     _expr(out);
-    EMIT("  neg %%rax\n");
+    EMIT("neg %%rax\n");
     break;
   case TK_AND:
     if (PEEK(1)->kind != TK_ID) ERROR("expected identifier\n");
@@ -403,7 +384,7 @@ static void _unary(FILE *out) {
     NEXT(1);
     if (PEEK(0)->kind == TK_ID) return _ident(out, LVALUE_DEREF);
     _expr(out);
-    EMIT("  mov (%%rax),%%rax\n");
+    EMIT("mov (%%rax),%%rax\n");
     break;
   default: ERROR("unexpected operator\n");
   }
@@ -436,7 +417,7 @@ static int _precop(int kind, int prec) {
 static void _compare_expr(FILE *out, int op, int prec) {
   _binary(out, prec+1);
   if (prec < PREC_COMPARE) ERROR("&& and || are not implemented yet\n");
-  EMIT("  pop %%rdi\n  cmp %%rax,%%rdi\n  %s %%al\n  movzb %%al,%%rax\n", GENCMP[op]);
+  EMIT("pop %%rdi\ncmp %%rax,%%rdi\n%s %%al\nmovzb %%al,%%rax\n", GENCMP[op]);
 }
 
 static void _binary_expr(FILE *out, int op, int prec) {
@@ -452,7 +433,7 @@ static void _binary(FILE *out, int prec) {
   while (prec < MAX_PRECEDENCE && _precop(PEEK(0)->kind, prec)) {
     if ((op = PEEK(0)->kind) == TK_EOF) break;
     NEXT(1);
-    EMIT("  push %%rax\n");
+    EMIT("push %%rax\n");
     if (prec <= PREC_COMPARE) _compare_expr(out, op, prec);
     else _binary_expr(out, op, prec);
   }
@@ -493,12 +474,12 @@ static void _kwvar(FILE *out, int skip) {
       ERROR("cannot redefine variable '%.*s'\n", PEEK(0)->sz, PEEK(0)->ptr);
     /* XXX: actual types */
     sz = _newvar(PEEK(0)->ptr, PEEK(0)->sz, 8);
-    EMIT("  sub $%d,%%rsp\n", 8);
+    EMIT("sub $%d,%%rsp\n", 8);
     NEXT(1);
     if (PEEK(0)->kind == TK_EQ) {
       NEXT(1);
       _expr(out);
-      EMIT("  mov %%rax,-%d(%%rbp)\n", sz);
+      EMIT("mov %%rax,-%d(%%rbp)\n", sz);
     }
   } while (PEEK(0)->kind == TK_COMMA);
 }
@@ -542,9 +523,9 @@ static void _kwfun(FILE *out) {
       if (++funs[nfuns].arity > MAX_ARGS)
         ERROR("more than 6 arguments not supported yet\n");
     }
-    EMIT("  sub $%d,%%rsp\n", arg);
+    EMIT("sub $%d,%%rsp\n", arg);
     for (i = 0; i < funs[nfuns].arity; ++i)
-      EMIT("  mov %s,-%d(%%rbp)\n", ARGREGS[i], _getvarpos(i));
+      EMIT("mov %s,-%d(%%rbp)\n", ARGREGS[i], _getvarpos(i));
   }
   if (PEEK(0)->kind != TK_RPAREN) ERROR("missing ')'\n");
   NEXT(1);
@@ -557,7 +538,7 @@ static void _kwfun(FILE *out) {
 static void _kwreturn(FILE *out) {
   NEXT(1);
   if (PEEK(0)->kind != TK_SEMI) _expr(out);
-  EMIT("  jmp .L__%.*s.ret\n", funs[nfuns-1].sz, funs[nfuns-1].name);
+  EMIT("jmp .L__%.*s.ret\n", funs[nfuns-1].sz, funs[nfuns-1].name);
 }
 
 static void _kwextern(FILE *out) {
@@ -572,7 +553,7 @@ static void _kwextern(FILE *out) {
 static void _kwbreak(FILE *out) {
   NEXT(1);
   if (cloop == 0) ERROR("unexpected break\n");
-  EMIT("  jmp .L__while.end.%d\n", cloop-1);
+  EMIT("jmp .L__while.end.%d\n", cloop-1);
 }
 
 static void _kwwhile(FILE *out) {
@@ -581,21 +562,19 @@ static void _kwwhile(FILE *out) {
   NEXT(1);
   EMIT(".L__while.%d:\n", cur);
   _expr(out);
-  EMIT("  testq %%rax,%%rax\n  jz .L__while.end.%d\n", cur);
+  EMIT("testq %%rax,%%rax\njz .L__while.end.%d\n", cur);
   _body(out);
   cloop = cur;
-  EMIT("  jmp .L__while.%d\n.L__while.end.%d:\n", cur, cur);
+  EMIT("jmp .L__while.%d\n.L__while.end.%d:\n", cur, cur);
 }
 
 static void _kwif(FILE *out) {
   int cur = nlabls++;
   NEXT(1);
   _expr(out);
-  EMIT("  testq %%rax,%%rax\n"
-               "  jz .L__if.end.%d\n", cur);
+  EMIT("testq %%rax,%%rax\njz .L__if.end.%d\n", cur);
   _body(out);
-  EMIT("  jmp .L__ifelse.end.%d\n"
-               ".L__if.end.%d:\n", cur, cur);
+  EMIT("jmp .L__ifelse.end.%d\nL__if.end.%d:\n", cur, cur);
   if (PEEK(0)->kind == TK_ELSE) {
     NEXT(1);
     _body(out);
@@ -626,8 +605,8 @@ semi:
 
 void gen_file(FILE *out) {
   tok = toks;
-  EMIT(".text\n.globl _start\n_start:\n  xor %%rax,%%rax\n  call main\n");
-  EMIT("  mov %%rax,%%rdi\n  mov $60,%%rax\n  syscall\n");
+  EMIT(".text\n.globl _start\n_start:\nxor %%rax,%%rax\ncall main\n");
+  EMIT("mov %%rax,%%rdi\nmov $60,%%rax\nsyscall\n");
   do _stmt(out); while (tok->kind != TK_EOF);
   if (_getfun("main", 4) == -1) ERROR("missing 'main' function\n");
   EMIT(".data\n");
