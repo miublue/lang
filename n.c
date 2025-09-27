@@ -17,12 +17,12 @@ enum { LVALUE_NONE, LVALUE_REF, LVALUE_DEREF };
 enum {
   TK_EOF, TK_ID, TK_INT, TK_STR, TK_CHR,
   TK_IF, TK_ELSE, TK_WHILE, TK_BREAK,
-  TK_FUN, TK_RETURN, TK_EXTERN,
+  TK_FUN, TK_VAR, TK_RETURN, TK_EXTERN,
   TK_LBRACK, TK_RBRACK, TK_LPAREN, TK_RPAREN,
   TK_COMMA, TK_ADD, TK_SUB, TK_MUL, TK_DIV, TK_MOD,
   TK_BAND, TK_BOR, TK_BNOT, TK_EQ, TK_EQEQ, TK_NEQ,
   TK_LT, TK_GT, TK_LEQ, TK_GEQ, TK_SHL, TK_SHR,
-  TK_AND, TK_OR, TK_AT, TK_NOT, TK_XOR, TK_SEMI,
+  TK_AND, TK_OR, TK_NOT, TK_XOR, TK_SEMI,
   MAX_TOKENS
 };
 
@@ -49,16 +49,16 @@ static const char *ARGREGS[MAX_ARGS] = {
   "%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9",
 };
 
-static const char *CHAROPS = "{}(),+-*/%&|@!=<>~^;";
+static const char *CHAROPS = "{}(),+-*/%&|!=<>~^;";
 static const char *OPERATORS[] = {
   "{", "}", "(", ")", ",", "+", "-", "*", "/", "%",
   "&&", "||", "!", "=", "==", "!=", "<", ">", "<=",
-  ">=", "<<", ">>", "&", "|", "@", "~", "^", ";",
+  ">=", "<<", ">>", "&", "|", "~", "^", ";",
 };
 
 static const char *KEYWORDS[] = {
   "if", "else", "while", "break",
-  "fun", "return", "extern",
+  "fun", "var", "return", "extern",
 };
 
 /* XXX: these structures are literally the same */
@@ -132,8 +132,7 @@ static uint32_t nlabls = 0, cloop = 0;
 #define ERROR(...) {fprintf(stderr, "error: "__VA_ARGS__);exit(1);}
 
 static void _append_token(token_t tok) {
-  if (toks_sz >= toks_cap)
-    toks = realloc(toks, sizeof(token_t)*(toks_cap += ALLOC_SZ));
+  if (toks_sz >= toks_cap) toks = realloc(toks, sizeof(token_t)*(toks_cap += ALLOC_SZ));
   toks[toks_sz++] = tok;
 }
 
@@ -325,12 +324,8 @@ static void _ident(FILE *out, int lvalue) {
   case TK_EQ: {
     if (lvalue == LVALUE_REF) ERROR("unexpected '&'\n");
     /* XXX: proper types/type sizes */
-    if (idx == -1) {
-      if (lvalue != LVALUE_NONE) ERROR("undefined variable '%*.s'\n", name->sz, name->ptr);
-      idx = nvars;
-      sz = _newvar(name->ptr, name->sz, 8);
-      EMIT("  sub $%d,%%rsp\n", vars[idx].type_sz);
-    } else sz = _getvarpos(idx);
+    if (idx == -1) ERROR("undefined variable '%.*s'\n", name->sz, name->ptr);
+    sz = _getvarpos(idx);
     NEXT(1);
     _expr(out);
     if (lvalue == LVALUE_DEREF)
@@ -404,7 +399,7 @@ static void _unary(FILE *out) {
     if (PEEK(1)->kind != TK_ID) ERROR("expected identifier\n");
     NEXT(1);
     return _ident(out, LVALUE_REF);
-  case TK_AT:
+  case TK_MUL:
     NEXT(1);
     if (PEEK(0)->kind == TK_ID) return _ident(out, LVALUE_DEREF);
     _expr(out);
@@ -417,7 +412,7 @@ static void _unary(FILE *out) {
 static void _term(FILE *out) {
   switch (PEEK(0)->kind) {
   case TK_NOT: case TK_BNOT: case TK_SUB:
-  case TK_AT: case TK_AND: return _unary(out);
+  case TK_MUL: case TK_AND: return _unary(out);
   case TK_INT: return _number(out);
   case TK_CHR: return _character(out);
   case TK_STR: return _string(out);
@@ -485,30 +480,50 @@ static void _body(FILE *out) {
   }
 }
 
-static int _allocate_vars(void) {
-  int in = 0, nvars = 0, idx = 0;
+static void _kwvar(FILE *out, int skip) {
+  if (skip) {
+    do NEXT(1); while (PEEK(0)->kind != TK_SEMI);
+    return;
+  }
+  int sz;
+  do {
+    NEXT(1);
+    if (PEEK(0)->kind != TK_ID) ERROR("expected variable name\n");
+    if (_getvar(PEEK(0)->ptr, PEEK(0)->sz) != -1)
+      ERROR("cannot redefine variable '%.*s'\n", PEEK(0)->sz, PEEK(0)->ptr);
+    /* XXX: actual types */
+    sz = _newvar(PEEK(0)->ptr, PEEK(0)->sz, 8);
+    EMIT("  sub $%d,%%rsp\n", 8);
+    NEXT(1);
+    if (PEEK(0)->kind == TK_EQ) {
+      NEXT(1);
+      _expr(out);
+      EMIT("  mov %%rax,-%d(%%rbp)\n", sz);
+    }
+  } while (PEEK(0)->kind == TK_COMMA);
+}
+
+static void _allocate_vars(FILE *out) {
+  int in = 0;
   token_t *cur = tok;
-  if (PEEK(0)->kind != TK_LBRACK) return 0;
+  if (PEEK(0)->kind != TK_LBRACK) return;
   do {
     if (PEEK(0)->kind == TK_LBRACK) ++in;
     if (PEEK(0)->kind == TK_RBRACK) --in;
-    if (PEEK(0)->kind == TK_ID && PEEK(1)->kind == TK_EQ) {
-      /* XXX: types */
-      if (_getvar(PEEK(0)->ptr, PEEK(0)->sz) == -1)
-        idx = _newvar(PEEK(0)->ptr, PEEK(0)->sz, 8);
-      NEXT(1);
+    if (PEEK(0)->kind == TK_VAR) {
+      _kwvar(out, 0);
+      if (PEEK(0)->kind != TK_SEMI) ERROR("missing ';'\n");
     }
     NEXT(1);
   } while (PEEK(0)->kind != TK_EOF && in > 0);
   tok = cur; /* restore position */
-  return (idx == -1)? 0 : _getvarpos(idx);
 }
 
 static void _kwfun(FILE *out) {
   token_t *name = PEEK(1);
   if (name->kind != TK_ID) ERROR("expected function name\n");
   NEXT(2); /* skip fun + name */
-  int i, nvars, arg, idx = _getfun(name->ptr, name->sz);
+  int i, arg, idx = _getfun(name->ptr, name->sz);
   _funhdr(name->ptr, name->sz, out);
   /* XXX: also preallocate arguments in a single instruction */
   if (PEEK(0)->kind != TK_LPAREN) ERROR("missing '(' for function '%.*s'\n", name->sz, name->ptr);
@@ -533,15 +548,15 @@ static void _kwfun(FILE *out) {
   }
   if (PEEK(0)->kind != TK_RPAREN) ERROR("missing ')'\n");
   NEXT(1);
-  if (idx != -1) ERROR("attempt to redefine function '%.*s'\n", name->sz, name->ptr);
-  if (nvars = _allocate_vars()) EMIT("  sub $%d,%%rsp\n", nvars);
+  if (idx != -1) ERROR("cannot redefine function '%.*s'\n", name->sz, name->ptr);
+  _allocate_vars(out);
   _body(out);
   _funftr(out);
 }
 
 static void _kwreturn(FILE *out) {
   NEXT(1);
-  _expr(out);
+  if (PEEK(0)->kind != TK_SEMI) _expr(out);
   EMIT("  jmp .L__%.*s.ret\n", funs[nfuns-1].sz, funs[nfuns-1].name);
 }
 
@@ -593,10 +608,11 @@ static void _stmt(FILE *out) {
   case TK_FUN:    return _kwfun(out);
   case TK_IF:     return _kwif(out);
   case TK_WHILE:  return _kwwhile(out);
+  case TK_VAR:    _kwvar(out, 1); break;
   case TK_RETURN: _kwreturn(out); break;
   case TK_EXTERN: _kwextern(out); break;
   case TK_BREAK:  _kwbreak(out); break;
-  case TK_AT:     _unary(out); break;
+  case TK_MUL:    _unary(out); break;
   case TK_ID:     _ident(out, LVALUE_NONE); break;
   default: ERROR("unexpected token '%.*s'\n", PEEK(0)->sz, PEEK(0)->ptr);
   }
