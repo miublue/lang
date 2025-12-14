@@ -17,7 +17,7 @@ enum { LVALUE_NONE, LVALUE_REF, LVALUE_DEREF };
 
 enum {
   TK_EOF, TK_ID, TK_INT, TK_STR, TK_CHR,
-  TK_IF, TK_ELSE, TK_WHILE, TK_BREAK,
+  TK_IF, TK_ELSE, TK_WHILE, TK_BREAK, TK_CONTINUE,
   TK_FUN, TK_VAR, TK_RETURN, TK_EXTERN,
   TK_LBRACK, TK_RBRACK, TK_LPAREN, TK_RPAREN,
   TK_COMMA, TK_ADD, TK_SUB, TK_MUL, TK_DIV, TK_MOD,
@@ -54,7 +54,7 @@ static const char *OPERATORS[] = {
 };
 
 static const char *KEYWORDS[] = {
-  "if", "else", "while", "break",
+  "if", "else", "while", "break", "continue",
   "fun", "var", "return", "extern",
 };
 
@@ -545,10 +545,10 @@ static void _kwextern(FILE *out) {
   } while (PEEK(0)->kind == TK_COMMA);
 }
 
-static void _kwbreak(FILE *out) {
+static void _kwbreak(FILE *out, int is_continue) {
   NEXT(1);
-  if (cloop == 0) ERROR("unexpected break\n");
-  EMIT("jmp .L__while.end.%d\n", cloop-1);
+  if (cloop == 0) ERROR("unexpected %s\n", is_continue? "continue" : "break");
+  EMIT("jmp .L__while%s%d\n", is_continue? "." : ".end.", cloop-1);
 }
 
 static void _kwwhile(FILE *out) {
@@ -579,15 +579,16 @@ static void _kwif(FILE *out) {
 
 static void _stmt(FILE *out) {
   switch (PEEK(0)->kind) {
-  case TK_FUN:    return _kwfun(out);
-  case TK_IF:     return _kwif(out);
-  case TK_WHILE:  return _kwwhile(out);
-  case TK_VAR:    _kwvar(out); break;
-  case TK_RETURN: _kwreturn(out); break;
-  case TK_EXTERN: _kwextern(out); break;
-  case TK_BREAK:  _kwbreak(out); break;
-  case TK_MUL:    _unary(out); break;
-  case TK_ID:     _ident(out, LVALUE_NONE); break;
+  case TK_FUN:      return _kwfun(out);
+  case TK_IF:       return _kwif(out);
+  case TK_WHILE:    return _kwwhile(out);
+  case TK_VAR:      _kwvar(out); break;
+  case TK_RETURN:   _kwreturn(out); break;
+  case TK_EXTERN:   _kwextern(out); break;
+  case TK_BREAK:    _kwbreak(out, 0); break;
+  case TK_CONTINUE: _kwbreak(out, 1); break;
+  case TK_MUL:      _unary(out); break;
+  case TK_ID:       _ident(out, LVALUE_NONE); break;
   default: ERROR("unexpected token '%.*s'\n", PEEK(0)->sz, PEEK(0)->ptr);
   }
 semi:
