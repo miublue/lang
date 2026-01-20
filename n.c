@@ -12,9 +12,6 @@
 #define MAX_VARS 256
 #define MAX_ARGS 6
 
-/* XXX: i probably wouldn't need this enum if my compiler were any good */
-enum { LVALUE_NONE, LVALUE_REF, LVALUE_DEREF };
-
 enum {
   TK_EOF, TK_ID, TK_INT, TK_STR, TK_CHR,
   TK_IF, TK_ELSE, TK_WHILE, TK_BREAK, TK_CONTINUE,
@@ -154,7 +151,7 @@ static token_t _next_token(void) {
       ++tok.sz;
       NEXT(1);
     }
-    return tok;
+    goto ret;
   } else if (PEEK(0) == '\'') {
     tok.kind = TK_CHR;
     ++tok.ptr;
@@ -166,7 +163,7 @@ static token_t _next_token(void) {
     NEXT(1);
     if (PEEK(1) != '\'') ERROR("unclosed character\n");
     NEXT(2);
-    return tok;
+    goto ret;
   } else if (PEEK(0) == '\"') {
     tok.kind = TK_STR;
     ++tok.ptr;
@@ -181,7 +178,7 @@ static token_t _next_token(void) {
       NEXT(1);
     }
     NEXT(1);
-    return tok;
+    goto ret;
   } else if (strchr(CHAROPS, PEEK(0)) != NULL) {
     int op1 = _is_operator(tok.ptr, 1);
     int op2 = _is_operator(tok.ptr, 2);
@@ -193,7 +190,7 @@ static token_t _next_token(void) {
       tok.sz = 1;
     } else ERROR("unknown operator\n");
     NEXT(tok.sz);
-    return tok;
+    goto ret;
   } else if (isalpha(PEEK(0)) || PEEK(0) == '_') {
     tok.kind = TK_ID;
     while (BOUND(0) && (isalnum(PEEK(0)) || PEEK(0) == '_')) {
@@ -202,9 +199,11 @@ static token_t _next_token(void) {
     }
     int kwrd = _is_keyword(tok.ptr, tok.sz);
     if (kwrd != -1) tok.kind = kwrd+TK_IF;
-    return tok;
+    goto ret;
   }
   ERROR("invalid character '%c'\n", PEEK(0));
+ret:
+  return tok;
 }
 
 #undef PEEK
@@ -276,13 +275,12 @@ static void _funftr(FILE *out) {
   EMIT(".L__%.*s.ret:\nleave\nret\n", funs[nfuns-1].sz, funs[nfuns-1].name);
 }
 
-static void _ident(FILE *out, int lvalue) {
+static int _ident(FILE *out) {
   token_t *name = PEEK(0);
   int idx, sz;
   NEXT(1);
   idx = _getvar(name->ptr, name->sz);
-  switch (PEEK(0)->kind) {
-  case TK_LPAREN: {
+  if (PEEK(0)->kind == TK_LPAREN) {
     int arity = 0;
     if (PEEK(1)->kind != TK_RPAREN) {
       do {
@@ -297,28 +295,19 @@ static void _ident(FILE *out, int lvalue) {
     NEXT(1);
     for (; arity > 0; --arity) EMIT("pop %s\n", ARGREGS[arity-1]);
     EMIT("call %.*s\n", name->sz, name->ptr);
-  } break;
-  /* set variable */
-  case TK_EQ: {
-    if (lvalue == LVALUE_REF) ERROR("unexpected '&'\n");
-    /* XXX: proper types/type sizes */
-    if (idx == -1) ERROR("undefined variable '%.*s'\n", name->sz, name->ptr);
-    sz = _getvarpos(idx);
-    NEXT(1);
-    _expr(out);
-    if (lvalue == LVALUE_DEREF)
-      EMIT("push %%rax\nmov -%d(%%rbp),%%rax\npop (%%rax)\n", sz);
-    else EMIT("mov %%rax,-%d(%%rbp)\n", sz);
-  } break;
-  /* get variable */
-  default:
-    if (idx == -1) ERROR("undefined variable '%.*s'\n", name->sz, name->ptr);
-    if (lvalue == LVALUE_REF)
-      EMIT("lea -%d(%%rbp),%%rax\n", _getvarpos(idx));
-    else if (lvalue == LVALUE_DEREF)
-      EMIT("mov -%d(%%rbp),%%rax\nmov (%%rax),%%rax\n", _getvarpos(idx));
-    else EMIT("mov -%d(%%rbp),%%rax\n", _getvarpos(idx));
+    return 0;
   }
+  if (idx == -1) ERROR("undefined variable '%.*s'\n", name->sz, name->ptr);
+  sz = _getvarpos(idx);
+  EMIT("lea -%d(%%rbp),%%rax\n", sz);
+  if (PEEK(0)->kind == TK_EQ) {
+    NEXT(1);
+    EMIT("push %%rax\n");
+    _expr(out);
+    EMIT("pop %%rdi\nmov %%rax,(%%rdi)\n");
+    return 0;
+  }
+  return 1;
 }
 
 static void _number(FILE *out) {
@@ -376,10 +365,19 @@ static void _unary(FILE *out) {
   case TK_AND:
     if (PEEK(1)->kind != TK_ID) ERROR("expected identifier\n");
     NEXT(1);
-    return _ident(out, LVALUE_REF);
+    _ident(out);
+    return;
   case TK_MUL:
     NEXT(1);
-    if (PEEK(0)->kind == TK_ID) return _ident(out, LVALUE_DEREF);
+    if (PEEK(0)->kind == TK_ID) {
+      /* XXX: '*var = value' doesn't really work properly rn lmao */
+      /* ideally, i shouldn't check for the equal sign in '_ident',
+          but rather, check it after '_expr', so any expression that
+          returns a pointer may be able to move some value into it.
+       */
+      if (_ident(out)) EMIT("mov (%%rax),%%rax\n");
+      return;
+    }
     _expr(out);
     EMIT("mov (%%rax),%%rax\n");
     break;
@@ -394,7 +392,10 @@ static void _term(FILE *out) {
   case TK_INT: return _number(out);
   case TK_CHR: return _character(out);
   case TK_STR: return _string(out);
-  case TK_ID: return _ident(out, LVALUE_NONE);
+  case TK_ID: {
+    if (_ident(out)) EMIT("mov (%%rax),%%rax\n");
+    return;
+  }
   case TK_LPAREN:
     NEXT(1);
     _expr(out);
@@ -588,7 +589,7 @@ static void _stmt(FILE *out) {
   case TK_BREAK:    _kwbreak(out, 0); break;
   case TK_CONTINUE: _kwbreak(out, 1); break;
   case TK_MUL:      _unary(out); break;
-  case TK_ID:       _ident(out, LVALUE_NONE); break;
+  case TK_ID:       _ident(out); break;
   default: ERROR("unexpected token '%.*s'\n", PEEK(0)->sz, PEEK(0)->ptr);
   }
 semi:
