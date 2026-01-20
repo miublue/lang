@@ -5,6 +5,7 @@ fun main() {
   var b = &a;
   *b = 69;
   putnum(*b);
+  putnum(a);
   return 0;
 }
 
