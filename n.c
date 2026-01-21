@@ -118,8 +118,15 @@ static void _append_token(token_t tok) {
 
 static void _skip_space(void) {
   while (BOUND(0) && isspace(PEEK(0))) NEXT(1);
-  if (BOUND(0) && PEEK(0) == '#') {
-    while (BOUND(0) && PEEK(0) != '\n') NEXT(1);
+  if (BOUND(1) && PEEK(0) == '/') {
+    if (PEEK(1) == '/') {
+      while (BOUND(0) && PEEK(0) != '\n') NEXT(1);
+    } else if (PEEK(1) == '*') {
+      NEXT(2); /* skip comment start */
+      while (BOUND(1) && !(PEEK(0) == '*' && PEEK(1) == '/')) NEXT(1);
+      if (!BOUND(2)) ERROR("unclosed comment\n");
+      NEXT(2); /* skip comment end */
+    } else return;
     _skip_space();
   }
 }
