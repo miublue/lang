@@ -275,7 +275,7 @@ static void _funftr(FILE *out) {
   EMIT(".L__%.*s.ret:\nleave\nret\n", funs[nfuns-1].sz, funs[nfuns-1].name);
 }
 
-static int _ident(FILE *out) {
+static int _ident(FILE *out, int is_deref) {
   token_t *name = PEEK(0);
   int idx, sz;
   NEXT(1);
@@ -299,7 +299,7 @@ static int _ident(FILE *out) {
   }
   if (idx == -1) ERROR("undefined variable '%.*s'\n", name->sz, name->ptr);
   sz = _getvarpos(idx);
-  EMIT("lea -%d(%%rbp),%%rax\n", sz);
+  EMIT("%s -%d(%%rbp),%%rax\n", is_deref? "mov" : "lea", sz);
   if (PEEK(0)->kind == TK_EQ) {
     NEXT(1);
     EMIT("push %%rax\n");
@@ -365,20 +365,16 @@ static void _unary(FILE *out) {
   case TK_AND:
     if (PEEK(1)->kind != TK_ID) ERROR("expected identifier\n");
     NEXT(1);
-    _ident(out);
+    _ident(out, 0);
     return;
   case TK_MUL:
     NEXT(1);
-    if (PEEK(0)->kind == TK_ID) {
-      /* XXX: '*var = value' doesn't really work properly rn lmao */
-      /* ideally, i shouldn't check for the equal sign in '_ident',
-          but rather, check it after '_expr', so any expression that
-          returns a pointer may be able to move some value into it.
-       */
-      if (_ident(out)) EMIT("mov (%%rax),%%rax\n");
+    if (PEEK(0)->kind != TK_ID) _expr(out);
+    else {
+      /* yessir, deref twice */
+      if (_ident(out, 1)) EMIT("mov (%%rax),%%rax\n");
       return;
     }
-    _expr(out);
     EMIT("mov (%%rax),%%rax\n");
     break;
   default: ERROR("unexpected operator\n");
@@ -387,15 +383,14 @@ static void _unary(FILE *out) {
 
 static void _term(FILE *out) {
   switch (PEEK(0)->kind) {
-  case TK_NOT: case TK_BNOT: case TK_SUB:
-  case TK_MUL: case TK_AND: return _unary(out);
   case TK_INT: return _number(out);
   case TK_CHR: return _character(out);
   case TK_STR: return _string(out);
-  case TK_ID: {
-    if (_ident(out)) EMIT("mov (%%rax),%%rax\n");
+  case TK_NOT: case TK_BNOT: case TK_SUB:
+  case TK_MUL: case TK_AND: return _unary(out);
+  case TK_ID:
+    if (_ident(out, 0)) EMIT("mov (%%rax),%%rax\n");
     return;
-  }
   case TK_LPAREN:
     NEXT(1);
     _expr(out);
@@ -589,7 +584,7 @@ static void _stmt(FILE *out) {
   case TK_BREAK:    _kwbreak(out, 0); break;
   case TK_CONTINUE: _kwbreak(out, 1); break;
   case TK_MUL:      _unary(out); break;
-  case TK_ID:       _ident(out); break;
+  case TK_ID:       _ident(out, 0); break;
   default: ERROR("unexpected token '%.*s'\n", PEEK(0)->sz, PEEK(0)->ptr);
   }
 semi:
