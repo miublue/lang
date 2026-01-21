@@ -81,16 +81,16 @@ static const char *GENCMP[MAX_TOKENS] = {
 };
 
 static const char *GENOPS[MAX_TOKENS] = {
-  [TK_SHL] =  "mov %rax,%rcx\npop %rax\nshl %cl,%rax\n",
-  [TK_SHR] =  "mov %rax,%rcx\npop %rax\nsar %cl,%rax\n",
-  [TK_AND] =  "pop %rdi\nand %rdi,%rax\n",
-  [TK_XOR] =  "pop %rdi\nxor %rdi,%rax\n",
-  [TK_OR]  =  "pop %rdi\nor %rdi,%rax\n",
-  [TK_ADD] =  "pop %rdi\nadd %rdi,%rax\n",
-  [TK_SUB] =  "mov %rax,%rdi\npop %rax\nsub %rdi,%rax\n",
-  [TK_MUL] =  "pop %rdi\nimul %rdi,%rax\n",
-  [TK_DIV] =  "mov %rax,%rdi\npop %rax\ncqo\nidiv %rdi\n",
-  [TK_MOD] =  "mov %rax,%rdi\npop %rax\ncqo\nidiv %rdi\nmov %rdx,%rax\n",
+  [TK_SHL] = "mov %rax,%rcx\npop %rax\nshl %cl,%rax\n",
+  [TK_SHR] = "mov %rax,%rcx\npop %rax\nsar %cl,%rax\n",
+  [TK_AND] = "pop %rdi\nand %rdi,%rax\n",
+  [TK_XOR] = "pop %rdi\nxor %rdi,%rax\n",
+  [TK_OR]  = "pop %rdi\nor %rdi,%rax\n",
+  [TK_ADD] = "pop %rdi\nadd %rdi,%rax\n",
+  [TK_SUB] = "mov %rax,%rdi\npop %rax\nsub %rdi,%rax\n",
+  [TK_MUL] = "pop %rdi\nimul %rdi,%rax\n",
+  [TK_DIV] = "mov %rax,%rdi\npop %rax\ncqo\nidiv %rdi\n",
+  [TK_MOD] = "mov %rax,%rdi\npop %rax\ncqo\nidiv %rdi\nmov %rdx,%rax\n",
 };
 
 static uint32_t toks_sz, toks_cap, text_sz, i;
@@ -370,8 +370,7 @@ static void _unary(FILE *out) {
   case TK_MUL:
     NEXT(1);
     if (PEEK(0)->kind != TK_ID) _expr(out);
-    else {
-      /* yessir, deref twice */
+    else { /* yessir, deref twice */
       if (_ident(out, 1)) EMIT("mov (%%rax),%%rax\n");
       return;
     }
@@ -432,9 +431,7 @@ static void _binary(FILE *out, int prec) {
   }
 }
 
-static void _expr(FILE *out) {
-  _binary(out, 0);
-}
+static void _expr(FILE *out) { _binary(out, 0); }
 
 static void _body(FILE *out) {
   if (PEEK(0)->kind != TK_LBRACK) {
